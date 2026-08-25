@@ -138,3 +138,27 @@ func DeleteUser(db *sql.DB, id int64) error {
 
 	return nil
 }
+
+func GetAllUsers(db *sql.DB) ([]User, error) {
+	query := `SELECT id, username, email, role, created_at FROM users ORDER BY id ASC`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Role, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return users, nil
+}

@@ -7,25 +7,20 @@ import (
 )
 
 func SetupUserRoutes(mux *http.ServeMux, h *UserHandler, mw *auth.Middleware) {
-	// Public endpoint
+	// Public
 	mux.HandleFunc("POST /api/users/register", h.Register)
 
-	// Protected endpoint: Any authenticated user
-	mux.Handle("GET /api/users/{id}", mw.Authenticate(
-		http.HandlerFunc(h.GetUser),
+	// Admin Only: Fetch all users list
+	mux.Handle("GET /api/users", mw.Authenticate(
+		mw.RequireRole(RoleAdmin)(http.HandlerFunc(h.GetAll)),
 	))
 
-	// Protected endpoint: Admin, Manager, or User
-	mux.Handle("PUT /api/users/{id}", mw.Authenticate(
-		mw.RequireRole(RoleAdmin, RoleManager, RoleUser)(http.HandlerFunc(h.Update)),
-	))
+	// Owner or Admin
+	mux.Handle("GET /api/users/{id}", mw.Authenticate(http.HandlerFunc(h.GetUser)))
+	mux.Handle("PUT /api/users/{id}", mw.Authenticate(http.HandlerFunc(h.Update)))
+	mux.Handle("PATCH /api/users/{id}/password", mw.Authenticate(http.HandlerFunc(h.UpdatePassword)))
 
-	// Protected endpoint: Any authenticated user
-	mux.Handle("PATCH /api/users/{id}/password", mw.Authenticate(
-		http.HandlerFunc(h.UpdatePassword),
-	))
-
-	// Protected endpoint: Admin only
+	// Admin Only: Delete user
 	mux.Handle("DELETE /api/users/{id}", mw.Authenticate(
 		mw.RequireRole(RoleAdmin)(http.HandlerFunc(h.Delete)),
 	))
