@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/docmanage_new/internal/auth"
 	"github.com/docmanage_new/internal/user"
 	_ "modernc.org/sqlite"
 )
@@ -39,10 +40,13 @@ func main() {
 	fmt.Println("User table initialized.")
 
 	userHandler := user.NewUserHandler(db)
+	authservice := auth.NewAuthService(db)
+	authHandler := auth.NewAuthHandler(authservice)
 
 	mux := http.NewServeMux()
 
 	user.SetupUserRoutes(mux, userHandler)
+	auth.SetupAuthRoutes(mux, authHandler)
 
 	fmt.Println("connected")
 
