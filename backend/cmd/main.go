@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/docmanage_new/internal/auth"
+	"github.com/docmanage_new/internal/folder"
 	"github.com/docmanage_new/internal/user"
 	_ "modernc.org/sqlite"
 )
@@ -60,8 +61,13 @@ func main() {
 	authHandler := auth.NewAuthHandler(authservice)
 	authMiddleware := auth.NewMiddleware(authservice)
 
+	folderRepo := folder.NewRepository(db)
+	folderService := folder.NewService(folderRepo)
+	folderHandler := folder.NewHandler(folderService)
+
 	mux := http.NewServeMux()
 	handlerWithCORS := enableCORS(mux)
+	folder.SetupFolderRoutes(mux, folderHandler, authMiddleware)
 
 	user.SetupUserRoutes(mux, userHandler, authMiddleware)
 	auth.SetupAuthRoutes(mux, authHandler)
