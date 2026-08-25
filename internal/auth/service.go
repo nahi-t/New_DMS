@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -35,20 +36,24 @@ func NewAuthService(db *sql.DB) *AuthService {
 }
 
 func (s *AuthService) Login(email, password string) (*AuthUser, string, error) {
-	query := `SELECT id, username, email, password_hash, role, created_at FROM users WHERE email = ?`
+
+	log.Printf("[DEBUG 1] Login attempt initiated for email: %s", email)
+	query := `SELECT id, username, email, password, role, created_at FROM users WHERE email = ?`
 
 	var u AuthUser
 	var hashedPassword string
 
 	err := s.DB.QueryRow(query, email).Scan(&u.ID, &u.Username, &u.Email, &hashedPassword, &u.Role, &u.CreatedAt)
 	if err != nil {
+		log.Printf("[DEBUG 2] Database lookup failed for %s: %v", email, err)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, "", errors.New("invalid email or password")
 		}
 		return nil, "", fmt.Errorf("db lookup failed: %w", err)
 	}
-
+	log.Printf("DEBUG: Found user ID %d for email %s", u.ID, u.Email)
 	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password)); err != nil {
+		log.Printf("[DEBUG 4] Password verification failed for email: %s", email)
 		return nil, "", errors.New("invalid email or password")
 	}
 
@@ -72,4 +77,26 @@ func (s *AuthService) generateToken(userID int64, role string) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(jwtSecret)
+}
+
+// ValidateToken parses and validates a JWT string, returning the embedded claims
+func (s *AuthService) ValidateToken(tokenStr string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		// Ensure signing method is HMAC
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return jwtSecret, nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("invalid token: %w", err)
+	}
+
+	claims, ok := token.Claims.(*Claims)
+	if !ok || !token.Valid {
+		return nil, errors.New("invalid token claims")
+	}
+
+	return claims, nil
 }

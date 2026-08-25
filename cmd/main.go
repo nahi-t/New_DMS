@@ -42,10 +42,11 @@ func main() {
 	userHandler := user.NewUserHandler(db)
 	authservice := auth.NewAuthService(db)
 	authHandler := auth.NewAuthHandler(authservice)
+	authMiddleware := auth.NewMiddleware(authservice)
 
 	mux := http.NewServeMux()
 
-	user.SetupUserRoutes(mux, userHandler)
+	user.SetupUserRoutes(mux, userHandler, authMiddleware)
 	auth.SetupAuthRoutes(mux, authHandler)
 
 	fmt.Println("connected")
