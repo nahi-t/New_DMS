@@ -1,13 +1,15 @@
 package auth
 
 import (
-	"database/sql"
+	"context"
 	"errors"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -28,29 +30,35 @@ type AuthUser struct {
 }
 
 type AuthService struct {
-	DB *sql.DB
+	DB *pgxpool.Pool
 }
 
-func NewAuthService(db *sql.DB) *AuthService {
+func NewAuthService(db *pgxpool.Pool) *AuthService {
 	return &AuthService{DB: db}
 }
 
 func (s *AuthService) Login(email, password string) (*AuthUser, string, error) {
-
 	log.Printf("[DEBUG 1] Login attempt initiated for email: %s", email)
-	query := `SELECT id, username, email, password, role, created_at FROM users WHERE email = ?`
+
+	// FIX 1: Changed '?' to '$1' for PostgreSQL pgx parameter binding
+	query := `SELECT id, username, email, password, role, created_at FROM users WHERE email = $1`
 
 	var u AuthUser
 	var hashedPassword string
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	err := s.DB.QueryRow(query, email).Scan(&u.ID, &u.Username, &u.Email, &hashedPassword, &u.Role, &u.CreatedAt)
+	err := s.DB.QueryRow(ctx, query, email).Scan(&u.ID, &u.Username, &u.Email, &hashedPassword, &u.Role, &u.CreatedAt)
 	if err != nil {
 		log.Printf("[DEBUG 2] Database lookup failed for %s: %v", email, err)
-		if errors.Is(err, sql.ErrNoRows) {
+
+		// FIX 2: Replaced sql.ErrNoRows with pgx.ErrNoRows
+		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, "", errors.New("invalid email or password")
 		}
 		return nil, "", fmt.Errorf("db lookup failed: %w", err)
 	}
+
 	log.Printf("DEBUG: Found user ID %d for email %s", u.ID, u.Email)
 	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password)); err != nil {
 		log.Printf("[DEBUG 4] Password verification failed for email: %s", email)
@@ -79,10 +87,8 @@ func (s *AuthService) generateToken(userID int64, role string) (string, error) {
 	return token.SignedString(jwtSecret)
 }
 
-// ValidateToken parses and validates a JWT string, returning the embedded claims
 func (s *AuthService) ValidateToken(tokenStr string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		// Ensure signing method is HMAC
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}

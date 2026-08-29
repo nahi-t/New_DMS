@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-// Custom type for context keys to prevent key collisions across packages
 type contextKey string
 
 const (
@@ -23,7 +22,6 @@ func NewMiddleware(service *AuthService) *Middleware {
 	return &Middleware{Service: service}
 }
 
-// Authenticate checks for a valid Bearer JWT and stores UserID/Role in request context
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
@@ -44,7 +42,6 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
-		// Inject user metadata into the request context
 		ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
 		ctx = context.WithValue(ctx, RoleKey, claims.Role)
 
@@ -52,7 +49,6 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// RequireRole enforces role-based authorization (RBAC) against user roles (admin, manager, user)
 func (m *Middleware) RequireRole(allowedRoles ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -61,20 +57,16 @@ func (m *Middleware) RequireRole(allowedRoles ...string) func(http.Handler) http
 				http.Error(w, `{"error": "Forbidden: missing authentication context"}`, http.StatusForbidden)
 				return
 			}
-
 			for _, role := range allowedRoles {
 				if userRole == role {
 					next.ServeHTTP(w, r)
 					return
 				}
 			}
-
 			http.Error(w, `{"error": "Forbidden: insufficient role permissions"}`, http.StatusForbidden)
 		})
 	}
 }
-
-// Helper functions to safely extract context values inside handlers
 
 func GetUserIDFromContext(ctx context.Context) (int64, error) {
 	id, ok := ctx.Value(UserIDKey).(int64)

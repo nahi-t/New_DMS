@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/useAuth';
 import Header from './components/Header';
 import UserManagement from './components/UserManagement';
 import FolderManagement from './components/FolderManagement';
+import EditUserModal from './components/EditUserModal';
 import { useEffect, useState } from 'react';
 import { getFolders, getUsers } from '@/lib/api';
 import { Folder, User } from '@/type';
@@ -14,6 +15,10 @@ export default function DashboardPage() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Modal state
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -33,6 +38,21 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchData();
   }, [user]);
+
+  const handleEditUser = (userToEdit: User) => {
+    setSelectedUser(userToEdit);
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setSelectedUser(null);
+  };
+
+  const handleSuccess = () => {
+    fetchData();
+    handleCloseModal();
+  };
 
   if (loading) {
     return (
@@ -55,7 +75,12 @@ export default function DashboardPage() {
               </h2>
             </div>
             <div className="p-6">
-              <UserManagement users={users} onUserChange={fetchData} />
+              <UserManagement
+                users={users}
+                onUserChange={fetchData}
+                onEditUser={handleEditUser}
+                currentUser={user}
+              />
             </div>
           </div>
 
@@ -75,6 +100,17 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal – with currentUser passed */}
+      {isModalOpen && selectedUser && (
+        <EditUserModal
+          user={selectedUser}
+          currentUser={user}                     // <-- pass logged‑in user
+          isOwnProfile={selectedUser.id === user?.id}
+          onClose={handleCloseModal}
+          onSuccess={handleSuccess}
+        />
+      )}
     </div>
   );
 }

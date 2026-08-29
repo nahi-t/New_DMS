@@ -1,25 +1,27 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/docmanage_new/internal/auth"
 	"github.com/docmanage_new/internal/folder"
 	"github.com/docmanage_new/internal/user"
-	_ "modernc.org/sqlite"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 )
 
 func enableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow requests from your frontend origin (or use "*" for all origins during development)
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-		// Handle browser preflight OPTIONS requests immediately
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -28,33 +30,66 @@ func enableCORS(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-func OpenDB() (*sql.DB, error) {
-	db, err := sql.Open("sqlite", "app.db")
+
+func OpenDB() (*pgxpool.Pool, error) {
+	_ = godotenv.Load()
+	connStr := os.Getenv("DATABASE_URL")
+	if connStr == "" {
+		return nil, fmt.Errorf("DATABASE_URL environment variable is not set")
+	}
+
+	ctx := context.Background()
+
+	// 1. Parse connection string into pgxpool Config struct
+	config, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, fmt.Errorf("unable to parse connection string: %w", err)
 	}
 
-	// Ping verifies the database file is readable and reachable
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to reach database: %w", err)
+	// 2. CRITICAL FOR SUPABASE: Disable prepared statement caching
+	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+
+	// 3. Connect using configured pool settings
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create connection pool: %w", err)
 	}
 
-	return db, nil
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("database ping failed: %w", err)
+	}
+
+	var version string
+	if err := pool.QueryRow(ctx, "SELECT version()").Scan(&version); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("version query failed: %w", err)
+	}
+
+	log.Println("Connected to PostgreSQL:", version)
+	return pool, nil
 }
+
 func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	db, err := OpenDB()
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	defer db.Close()
+
 	fmt.Println("db connected")
 
 	if err := user.InitUserTable(db); err != nil {
 		log.Fatalf("Failed to initialize user table: %v", err)
 	}
 	fmt.Println("User table initialized.")
+
+	// Admin check/seeding: Logs status and proceeds naturally without crashing
+	msg := user.SeedAdminUser(ctx, db)
+	log.Println(msg)
 
 	userHandler := user.NewUserHandler(db)
 	authservice := auth.NewAuthService(db)
@@ -67,8 +102,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	handlerWithCORS := enableCORS(mux)
-	folder.SetupFolderRoutes(mux, folderHandler, authMiddleware)
 
+	folder.SetupFolderRoutes(mux, folderHandler, authMiddleware)
 	user.SetupUserRoutes(mux, userHandler, authMiddleware)
 	auth.SetupAuthRoutes(mux, authHandler)
 
@@ -76,5 +111,4 @@ func main() {
 	if err := http.ListenAndServe(":8080", handlerWithCORS); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
-
 }

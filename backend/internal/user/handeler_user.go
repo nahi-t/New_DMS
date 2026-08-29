@@ -1,7 +1,6 @@
 package user
 
 import (
-	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -10,13 +9,14 @@ import (
 	"time"
 
 	"github.com/docmanage_new/internal/auth"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type UserHandler struct {
-	DB *sql.DB
+	DB *pgxpool.Pool
 }
 
-func NewUserHandler(db *sql.DB) *UserHandler {
+func NewUserHandler(db *pgxpool.Pool) *UserHandler {
 	return &UserHandler{DB: db}
 }
 
@@ -79,7 +79,8 @@ func (h *UserHandler) Register(w http.ResponseWriter, r *http.Request) {
 	user, err := RegisterUser(h.DB, req.Username, req.Email, req.Password, req.Role)
 	if err != nil {
 		log.Printf("ERROR: Registration failed: %v", err)
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		// PostgreSQL unique constraint violation error check
+		if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(err.Error(), "duplicate key") {
 			http.Error(w, `{"error": "Username or email already exists"}`, http.StatusConflict)
 			return
 		}
@@ -117,14 +118,12 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 
 // Helper to check if the caller is the resource owner OR an admin
 func (h *UserHandler) canModifyUser(r *http.Request, targetID int64) bool {
-	// Extract caller's UserID and Role from r.Context() (set by auth.Middleware)
 	callerID, err := auth.GetUserIDFromContext(r.Context())
 	if err != nil {
 		return false
 	}
 	callerRole, _ := auth.GetRoleFromContext(r.Context())
 
-	// Admin can modify anyone; regular users can only modify themselves
 	return callerRole == RoleAdmin || callerID == targetID
 }
 
@@ -147,19 +146,37 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only admins are allowed to change user roles
 	callerRole, _ := auth.GetRoleFromContext(r.Context())
-	if req.Role != "" && callerRole != RoleAdmin {
-		http.Error(w, `{"error": "Forbidden: Only admins can alter user roles"}`, http.StatusForbidden)
-		return
+
+	var updatedUser *User
+
+	// Admin callers can modify profiles and change roles; standard callers can only update their profile
+	if callerRole == RoleAdmin {
+		// If role is omitted in request, retain current user role
+		if req.Role == "" {
+			existing, err := GetUserByID(h.DB, id)
+			if err != nil {
+				if err.Error() == "user not found" {
+					http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
+					return
+				}
+				http.Error(w, `{"error": "Internal server error"}`, http.StatusInternalServerError)
+				return
+			}
+			req.Role = existing.Role
+		}
+		updatedUser, err = AdminUpdateUser(h.DB, id, req.Username, req.Email, req.Role)
+	} else {
+		// Regular user self-profile update (role field is ignored)
+		updatedUser, err = UpdateProfile(h.DB, id, req.Username, req.Email)
 	}
 
-	updatedUser, err := UpdateUser(h.DB, id, req.Username, req.Email, req.Role)
 	if err != nil {
 		if err.Error() == "user not found" {
 			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
 			return
 		}
+		log.Printf("ERROR: Update user failed: %v", err)
 		http.Error(w, `{"error": "Internal server error"}`, http.StatusInternalServerError)
 		return
 	}
@@ -207,10 +224,17 @@ func (h *UserHandler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"message": "Password updated successfully"}`))
 }
+
 func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseIDParam(r)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid user ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 🔒 Check ownership / admin privileges
+	if !h.canModifyUser(r, id) {
+		http.Error(w, `{"error": "Forbidden: You can only delete your own account"}`, http.StatusForbidden)
 		return
 	}
 
@@ -230,15 +254,7 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"message": "User deleted successfully"}`))
 }
 
-// Helper to extract {id} parameter from Go 1.22+ net/http ServeMux path
-func parseIDParam(r *http.Request) (int64, error) {
-	idStr := r.PathValue("id")
-	return strconv.ParseInt(idStr, 10, 64)
-}
-
 func (h *UserHandler) GetAll(w http.ResponseWriter, r *http.Request) {
-	// Query all users from your DB layer
-
 	users, err := GetAllUsers(h.DB)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to fetch users"}`, http.StatusInternalServerError)
@@ -253,4 +269,10 @@ func (h *UserHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
+}
+
+// Helper to extract {id} parameter from Go 1.22+ net/http ServeMux path
+func parseIDParam(r *http.Request) (int64, error) {
+	idStr := r.PathValue("id")
+	return strconv.ParseInt(idStr, 10, 64)
 }

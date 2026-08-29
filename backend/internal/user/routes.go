@@ -18,7 +18,7 @@ func SetupUserRoutes(mux *http.ServeMux, h *UserHandler, mw *auth.Middleware) {
 	// Owner or Admin
 	mux.Handle("GET /api/users/{id}", mw.Authenticate(http.HandlerFunc(h.GetUser)))
 	mux.Handle("PUT /api/users/{id}", mw.Authenticate(http.HandlerFunc(h.Update)))
-	mux.Handle("PATCH /api/users/{id}/password", mw.Authenticate(http.HandlerFunc(h.UpdatePassword)))
+	mux.Handle("PUT /api/users/{id}/password", mw.Authenticate(http.HandlerFunc(h.UpdatePassword)))
 
 	// Admin Only: Delete user
 	mux.Handle("DELETE /api/users/{id}", mw.Authenticate(

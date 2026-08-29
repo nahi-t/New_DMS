@@ -1,26 +1,28 @@
 package folder
 
 import (
-	"database/sql"
+	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Repository struct {
-	DB *sql.DB
+	DB *pgxpool.Pool
 }
 
-func NewRepository(db *sql.DB) *Repository {
+func NewRepository(db *pgxpool.Pool) *Repository {
 	return &Repository{DB: db}
 }
 
-func (r *Repository) Create(f *Folder) error {
+func (r *Repository) Create(ctx context.Context, f *Folder) error {
 	query := `INSERT INTO folders (name, created_by, created_at) VALUES ($1, $2, $3) RETURNING id, created_at`
-	return r.DB.QueryRow(query, f.Name, f.CreatedBy, time.Now()).Scan(&f.ID, &f.CreatedAt)
+	return r.DB.QueryRow(ctx, query, f.Name, f.CreatedBy, time.Now().UTC()).Scan(&f.ID, &f.CreatedAt)
 }
 
-func (r *Repository) GetAll() ([]Folder, error) {
+func (r *Repository) GetAll(ctx context.Context) ([]Folder, error) {
 	query := `SELECT id, name, created_by, created_at FROM folders ORDER BY id DESC`
-	rows, err := r.DB.Query(query)
+	rows, err := r.DB.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -34,10 +36,15 @@ func (r *Repository) GetAll() ([]Folder, error) {
 		}
 		folders = append(folders, f)
 	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return folders, nil
 }
 
-func (r *Repository) Delete(id int64) error {
-	_, err := r.DB.Exec(`DELETE FROM folders WHERE id = $1`, id)
+func (r *Repository) Delete(ctx context.Context, id int64) error {
+	_, err := r.DB.Exec(ctx, `DELETE FROM folders WHERE id = $1`, id)
 	return err
 }
