@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/docmanage_new/internal/auth"
+	"github.com/docmanage_new/internal/document"
+	"github.com/docmanage_new/internal/documentversion"
 	"github.com/docmanage_new/internal/folder"
 	"github.com/docmanage_new/internal/user"
 	"github.com/jackc/pgx/v5"
@@ -93,6 +95,11 @@ func main() {
 
 	userHandler := user.NewUserHandler(db)
 	authservice := auth.NewAuthService(db)
+	docHandler := document.NewHandler(db)
+
+	documentVersionService := documentversion.NewService(documentversion.NewRepository(db))
+	documentvesionHandler := documentversion.NewDocumentVersionHandler(documentVersionService)
+	documentversion.NewStorageManager("./versions") // Ensure the storage manager is initialized with a base directory
 	authHandler := auth.NewAuthHandler(authservice)
 	authMiddleware := auth.NewMiddleware(authservice)
 
@@ -106,6 +113,8 @@ func main() {
 	folder.SetupFolderRoutes(mux, folderHandler, authMiddleware)
 	user.SetupUserRoutes(mux, userHandler, authMiddleware)
 	auth.SetupAuthRoutes(mux, authHandler)
+	document.RegisterRoutes(mux, docHandler, authMiddleware)
+	documentversion.RegisterDocumentVersionRoutes(mux, documentvesionHandler, authMiddleware)
 
 	log.Println("Server running on http://localhost:8080")
 	if err := http.ListenAndServe(":8080", handlerWithCORS); err != nil {

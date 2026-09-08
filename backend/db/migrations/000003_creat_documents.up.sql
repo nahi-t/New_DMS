@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS documents (
     size BIGINT,
     uploaded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     description TEXT,
-    version INTEGER DEFAULT 1
+   
 );
 
 -- Indexes for performance

@@ -23,3 +23,18 @@ export interface LoginResponse {
 export interface ApiError {
   message: string;
 }
+
+// type/index.ts
+
+export interface Document {
+  id: number;
+  folder_id: number;
+  user_id: number;
+  name: string;
+  file_path: string;
+  mime_type: string;
+  size: number;
+  uploaded_at: string;
+  description?: string;
+  version?:number;
+}

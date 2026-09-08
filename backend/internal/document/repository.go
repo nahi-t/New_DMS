@@ -15,7 +15,7 @@ func InsertDocument(ctx context.Context, db *pgxpool.Pool, doc *Document) error 
     `
 	return db.QueryRow(ctx, query,
 		doc.FolderID, doc.UserID, doc.Name, doc.FilePath,
-		doc.MimeType, doc.Size, doc.Description, 1,
+		doc.MimeType, doc.Size, doc.Description, doc.version,
 	).Scan(&doc.ID, &doc.UploadedAt)
 }
 
@@ -36,7 +36,7 @@ func GetDocumentsByFolder(ctx context.Context, db *pgxpool.Pool, folderID int64)
 	for rows.Next() {
 		var d Document
 		if err := rows.Scan(&d.ID, &d.FolderID, &d.UserID, &d.Name, &d.FilePath,
-			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.Version); err != nil {
+			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.version); err != nil {
 			return nil, err
 		}
 		docs = append(docs, d)
@@ -53,7 +53,7 @@ func GetDocumentByID(ctx context.Context, db *pgxpool.Pool, id int64) (*Document
 	var d Document
 	err := db.QueryRow(ctx, query, id).Scan(
 		&d.ID, &d.FolderID, &d.UserID, &d.Name, &d.FilePath,
-		&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.Version,
+		&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.version,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errors.New("document not found")
@@ -72,4 +72,65 @@ func DeleteDocumentRecord(ctx context.Context, db *pgxpool.Pool, id int64) error
 		return errors.New("document not found")
 	}
 	return nil
+}
+
+// UpdateDocumentName updates the document's name.
+func UpdateDocumentName(ctx context.Context, db *pgxpool.Pool, docID int64, newName string) error {
+	query := `UPDATE documents SET name = $1 WHERE id = $2`
+	res, err := db.Exec(ctx, query, newName, docID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("document not found")
+	}
+	return nil
+}
+
+// MoveDocument changes the folder of a document.
+func MoveDocument(ctx context.Context, db *pgxpool.Pool, docID, newFolderID int64) error {
+	// Optional: check that newFolderID exists (you can add a foreign key constraint)
+	query := `UPDATE documents SET folder_id = $1 WHERE id = $2`
+	res, err := db.Exec(ctx, query, newFolderID, docID)
+	if err != nil {
+		return err
+	}
+	if res.RowsAffected() == 0 {
+		return errors.New("document not found")
+	}
+	return nil
+}
+
+// SearchDocuments returns documents matching a search term, optionally filtered by folder.
+func SearchDocuments(ctx context.Context, db *pgxpool.Pool, searchTerm string, folderID *int64) ([]Document, error) {
+	var query string
+	var args []interface{}
+	if folderID != nil {
+		query = `SELECT id, folder_id, user_id, name, file_path, mime_type, size, uploaded_at, description, version
+                 FROM documents
+                 WHERE name ILIKE $1 AND folder_id = $2
+                 ORDER BY uploaded_at DESC`
+		args = append(args, "%"+searchTerm+"%", *folderID)
+	} else {
+		query = `SELECT id, folder_id, user_id, name, file_path, mime_type, size, uploaded_at, description, version
+                 FROM documents
+                 WHERE name ILIKE $1
+                 ORDER BY uploaded_at DESC`
+		args = append(args, "%"+searchTerm+"%")
+	}
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var docs []Document
+	for rows.Next() {
+		var d Document
+		if err := rows.Scan(&d.ID, &d.FolderID, &d.UserID, &d.Name, &d.FilePath,
+			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.version); err != nil {
+			return nil, err
+		}
+		docs = append(docs, d)
+	}
+	return docs, rows.Err()
 }

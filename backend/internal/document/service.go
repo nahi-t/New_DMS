@@ -3,8 +3,11 @@ package document
 import (
 	"context"
 	"errors"
+
+	"io"
 	"mime/multipart"
 
+	"github.com/docmanage_new/internal/documentversion"
 	"github.com/docmanage_new/internal/storage"
 	"github.com/docmanage_new/internal/user"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,19 +49,40 @@ func (s *Service) UploadDocument(
 		MimeType:    fileHeader.Header.Get("Content-Type"),
 		Size:        fileHeader.Size,
 		Description: description,
-		Version:     1,
+		version:     1, // Initial version
 	}
 
+	// 1. Insert master document to get the document ID (doc.ID)
 	if err := InsertDocument(ctx, s.DB, doc); err != nil {
 		storage.DeleteFile(filePath)
 		return nil, err
 	}
+
+	// 2. Rewind the file stream back to start before versioning/hashing
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		storage.DeleteFile(filePath)
+		return nil, err
+	}
+
+	// 3. Build the DocumentVersion struct
+	docVersion := &documentversion.DocumentVersion{
+		UserID:     uploader.ID,
+		DocumentID: doc.ID, // 👈 Using int64 directly
+		Version:    1,
+		FilePath:   filePath,
+	}
+
+	// 4. Call the package-level CreateDocumentVersion function cleanly
+	if err := documentversion.CreateDocumentVersion(ctx, s.DB, docVersion, file); err != nil {
+		storage.DeleteFile(filePath)
+		return nil, err
+	}
+
 	return doc, nil
 }
 
 // ListDocuments returns documents for a folder.
 func (s *Service) ListDocuments(ctx context.Context, folderID int64, viewer *user.User) ([]Document, error) {
-	// Optional: check folder visibility for the viewer
 	return GetDocumentsByFolder(ctx, s.DB, folderID)
 }
 
@@ -88,4 +112,47 @@ func (s *Service) DeleteDocument(ctx context.Context, docID int64, requester *us
 	}
 	storage.DeleteFile(doc.FilePath)
 	return nil
+}
+
+// RenameDocument changes the name of a document.
+func (s *Service) RenameDocument(ctx context.Context, docID int64, newName string, requester *user.User) error {
+	doc, err := GetDocumentByID(ctx, s.DB, docID)
+	if err != nil {
+		return err
+	}
+	if requester.ID != doc.UserID && requester.Role != user.RoleAdmin {
+		return errors.New("permission denied")
+	}
+	return UpdateDocumentName(ctx, s.DB, docID, newName)
+}
+
+func (s *Service) updateDocumentContent(ctx context.Context, docID int64, newFile multipart.File, newFileHeader *multipart.FileHeader, userID int64, userRole string) error {
+	doc, err := GetDocumentByID(ctx, s.DB, docID)
+	if err != nil {
+		return err
+	}
+
+	// Check permissions using the role and ID from context
+	if userID != doc.UserID && userRole != "admin" { // Adjust "admin" to match your role string constant
+		return errors.New("permission denied")
+	}
+
+	return documentversion.UpdateDocumentVersion(ctx, s.DB, docID, newFile, newFileHeader, userID)
+}
+
+// MoveDocument changes the folder of a document.
+func (s *Service) MoveDocument(ctx context.Context, docID, newFolderID int64, requester *user.User) error {
+	doc, err := GetDocumentByID(ctx, s.DB, docID)
+	if err != nil {
+		return err
+	}
+	if requester.ID != doc.UserID && requester.Role != user.RoleAdmin {
+		return errors.New("permission denied")
+	}
+	return MoveDocument(ctx, s.DB, docID, newFolderID)
+}
+
+// SearchDocuments returns search results.
+func (s *Service) SearchDocuments(ctx context.Context, searchTerm string, folderID *int64, requester *user.User) ([]Document, error) {
+	return SearchDocuments(ctx, s.DB, searchTerm, folderID)
 }
