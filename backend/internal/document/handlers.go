@@ -313,3 +313,54 @@ func (h *Handler) UpdateDocumentContentHandler(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"message": "Document updated successfully"}`))
 }
+
+func (h *Handler) UpdateStatusHandler(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	docID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid document ID", http.StatusBadRequest)
+		return
+	}
+
+	// --- 1. Retrieve authenticated user ID and role from context ---
+	userID, err := auth.GetUserIDFromContext(r.Context())
+	if err != nil {
+		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+	role, err := auth.GetRoleFromContext(r.Context())
+	if err != nil {
+		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// --- 2. Build the user object (must match the type the service expects) ---
+	requester := &user.User{
+		ID:   userID,
+		Role: role,
+	}
+
+	// --- 3. Decode request body ---
+	var req struct {
+		Status  string `json:"status"`
+		Comment string `json:"comment"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// --- 4. Call service with the valid requester ---
+	err = h.Service.UpdateStatus(r.Context(), docID, req.Status, requester, req.Comment)
+	if err != nil {
+		if err.Error() == "permission denied" {
+			http.Error(w, `{"error": "Permission denied"}`, http.StatusForbidden)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message": "Document status and comment updated successfully"}`))
+}

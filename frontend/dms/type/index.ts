@@ -37,4 +37,6 @@ export interface Document {
   uploaded_at: string;
   description?: string;
   version?:number;
+comment?:string;
+  status?: string; 
 }

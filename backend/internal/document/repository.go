@@ -3,6 +3,7 @@ package document
 import (
 	"context"
 	"errors"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -15,7 +16,7 @@ func InsertDocument(ctx context.Context, db *pgxpool.Pool, doc *Document) error 
     `
 	return db.QueryRow(ctx, query,
 		doc.FolderID, doc.UserID, doc.Name, doc.FilePath,
-		doc.MimeType, doc.Size, doc.Description, doc.version,
+		doc.MimeType, doc.Size, doc.Description, doc.Version,
 	).Scan(&doc.ID, &doc.UploadedAt)
 }
 
@@ -36,7 +37,7 @@ func GetDocumentsByFolder(ctx context.Context, db *pgxpool.Pool, folderID int64)
 	for rows.Next() {
 		var d Document
 		if err := rows.Scan(&d.ID, &d.FolderID, &d.UserID, &d.Name, &d.FilePath,
-			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.version); err != nil {
+			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.Version); err != nil {
 			return nil, err
 		}
 		docs = append(docs, d)
@@ -53,7 +54,7 @@ func GetDocumentByID(ctx context.Context, db *pgxpool.Pool, id int64) (*Document
 	var d Document
 	err := db.QueryRow(ctx, query, id).Scan(
 		&d.ID, &d.FolderID, &d.UserID, &d.Name, &d.FilePath,
-		&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.version,
+		&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.Version,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errors.New("document not found")
@@ -127,10 +128,56 @@ func SearchDocuments(ctx context.Context, db *pgxpool.Pool, searchTerm string, f
 	for rows.Next() {
 		var d Document
 		if err := rows.Scan(&d.ID, &d.FolderID, &d.UserID, &d.Name, &d.FilePath,
-			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.version); err != nil {
+			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.Version); err != nil {
 			return nil, err
 		}
 		docs = append(docs, d)
 	}
 	return docs, rows.Err()
+}
+func UpdateDocumentStatus(
+	ctx context.Context,
+	db *pgxpool.Pool,
+	docID int64,
+	status string,
+	comment string,
+) (int64, error) {
+
+	query := `
+		UPDATE documents
+		SET status = $1, comment = $2
+		WHERE id = $3
+		RETURNING folder_id
+	`
+
+	var folderID int64
+
+	err := db.QueryRow(ctx, query, status, comment, docID).Scan(&folderID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, errors.New("document not found")
+		}
+		return 0, err
+	}
+
+	return folderID, nil
+}
+func FatchUserFromFOlder(ctx context.Context, db *pgxpool.Pool, folderID int64) (int64, error) {
+	query := `
+		SELECT created_by
+		FROM folders
+		WHERE id = $1
+	`
+
+	var userID int64
+
+	err := db.QueryRow(ctx, query, folderID).Scan(&userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, errors.New("folder not found")
+		}
+		return 0, err
+	}
+
+	return userID, nil
 }

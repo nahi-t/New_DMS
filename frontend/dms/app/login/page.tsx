@@ -3,12 +3,14 @@
 import { useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { Mail, Lock, Loader2 } from 'lucide-react';
+import CreateUserModal from '../dashboard/components/CreateUserModal';
 
 export default function LoginPage() {
   const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showModal, setShowModal] = useState(false); // State for modal visibility
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,9 +73,23 @@ export default function LoginPage() {
         </form>
 
         <p className="mt-6 text-center text-sm text-gray-600 dark:text-gray-400">
-          Demo credentials: admin@example.com / password (or manager/user)
+          <button
+            onClick={() => setShowModal(true)}
+            className="text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Sign up
+          </button>
+          {' • '}Demo credentials: admin@example.com / password (or manager/user)
         </p>
       </div>
+
+      {/* Render the modal when showModal is true */}
+      {showModal && (
+        <CreateUserModal
+          onClose={() => setShowModal(false)}
+          // If CreateUserModal expects any other props, pass them here
+        />
+      )}
     </div>
   );
 }

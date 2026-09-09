@@ -22,4 +22,7 @@ func RegisterRoutes(mux *http.ServeMux, handler *Handler, authMW *auth.Middlewar
 	mux.Handle("PATCH /api/documents/{id}/move", authMW.Authenticate(http.HandlerFunc(handler.Move)))
 	mux.Handle("GET /api/documents", authMW.Authenticate(http.HandlerFunc(handler.Search)))
 	mux.Handle("PUT /api/documents/{id}/content", authMW.Authenticate(http.HandlerFunc(handler.UpdateDocumentContentHandler)))
+
+	mux.Handle("PATCH /api/documents/{id}/status", authMW.Authenticate(http.HandlerFunc(handler.UpdateStatusHandler)))
+
 }

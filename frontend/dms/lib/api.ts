@@ -3,7 +3,7 @@ import { LoginResponse, User, Folder, Document, ApiError } from '@/type';
 
 const API_BASE = 'http://localhost:8080/api';
 
-type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'|'PATCH';
+type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
 // ---- JSON fetch (with auth) ----
 async function fetchWithAuth<T>(
@@ -129,8 +129,6 @@ export const updateUser = (
 };
 
 // ---- Password ----
-// Backend expects only { "new_password": "..." }
-// The old password is verified separately via the authenticated user context.
 export const updatePassword = (id: number, newPassword: string) =>
   fetchWithAuth<{ message: string }>(`/users/${id}/password`, 'PUT', {
     new_password: newPassword,
@@ -203,14 +201,22 @@ export const searchDocuments = (search: string, folderId?: number) => {
 
 export const updateDocumentContent = (docId: number, file: File) => {
   const formData = new FormData();
-  formData.append('document', file); // Matches r.FormFile("document") in Go backend
-  
+  formData.append('document', file);
   return fetchWithFormData<{ message: string }>(
     `/documents/${docId}/content`,
     'PUT',
     formData
   );
 };
+
+// ---- New: Document Status Update ----
+export const updateDocumentStatus = (docId: number, status: string, comment?: string) =>
+  fetchWithAuth<{ message: string }>(`/documents/${docId}/status`, 'PATCH', {
+    status,
+    ...(comment && { comment }),
+  });
+
+// ---- Document Version types and endpoints ----
 export interface DocumentVersion {
   id: number;
   document_id: number;

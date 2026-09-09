@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 
 interface Props {
   onClose: () => void;
-  onSuccess: () => void;
+   onSuccess?: () => void;
 }
 
 export default function CreateUserModal({ onClose, onSuccess }: Props) {
@@ -23,7 +23,7 @@ export default function CreateUserModal({ onClose, onSuccess }: Props) {
     try {
       await register(username, email, password, role);
       toast.success('User created successfully');
-      onSuccess();
+      onSuccess?.();
       onClose();
     } catch (error: any) {
       toast.error(error.message || 'Failed to create user');

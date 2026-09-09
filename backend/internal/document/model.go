@@ -12,5 +12,7 @@ type Document struct {
 	Size        int64     `json:"size"`
 	UploadedAt  time.Time `json:"uploaded_at"`
 	Description string    `json:"description,omitempty"`
-	version     int       `json:"version"`
+	Version     int       `json:"version"`
+	Status      string    `json:"status"`
+	Comment     string    `json:"comment,omitempty"`
 }

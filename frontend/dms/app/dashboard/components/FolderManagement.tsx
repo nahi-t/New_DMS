@@ -123,7 +123,7 @@ export default function FolderManagement({ folders, onFolderChange, canCreate, c
                       <td colSpan={colSpan} className="px-3 py-2 bg-gray-50 dark:bg-gray-800/50">
                         <DocumentManager
                           folderId={f.id}
-                          canUpload={canCreate}
+                          canUpload={true}   
                           canDelete={canDelete}
                            allFolders={folders} 
                         />

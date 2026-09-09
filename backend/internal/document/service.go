@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 
+	"github.com/docmanage_new/internal/auth"
 	"github.com/docmanage_new/internal/documentversion"
 	"github.com/docmanage_new/internal/storage"
 	"github.com/docmanage_new/internal/user"
@@ -32,9 +33,9 @@ func (s *Service) UploadDocument(
 	file multipart.File,
 	description string,
 ) (*Document, error) {
-	if uploader.Role != user.RoleAdmin && uploader.Role != user.RoleManager {
-		return nil, errors.New("permission denied: only admins and managers can upload")
-	}
+	// if uploader.Role != user.RoleAdmin && uploader.Role != user.RoleManager {
+	// 	return nil, errors.New("permission denied: only admins and managers can upload")
+	// }
 
 	filePath, err := storage.SaveFile(uploader.ID, fileHeader.Filename, file)
 	if err != nil {
@@ -49,7 +50,7 @@ func (s *Service) UploadDocument(
 		MimeType:    fileHeader.Header.Get("Content-Type"),
 		Size:        fileHeader.Size,
 		Description: description,
-		version:     1, // Initial version
+		Version:     1, // Initial version
 	}
 
 	// 1. Insert master document to get the document ID (doc.ID)
@@ -155,4 +156,73 @@ func (s *Service) MoveDocument(ctx context.Context, docID, newFolderID int64, re
 // SearchDocuments returns search results.
 func (s *Service) SearchDocuments(ctx context.Context, searchTerm string, folderID *int64, requester *user.User) ([]Document, error) {
 	return SearchDocuments(ctx, s.DB, searchTerm, folderID)
+}
+
+func (s *Service) UpdateStatus(
+	ctx context.Context,
+	docID int64,
+	newStatus string,
+	requester *user.User,
+	comment string,
+) error {
+
+	// 1. Get authenticated user ID from context
+	userID, err := auth.GetUserIDFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	// 2. Get the document
+	doc, err := GetDocumentByID(ctx, s.DB, docID)
+	if err != nil {
+		return err
+	}
+
+	if doc == nil {
+		return errors.New("document not found")
+	}
+
+	// 3. Make sure requester exists
+	if requester == nil {
+		return errors.New("requester is nil")
+	}
+
+	// 4. Make sure the authenticated user matches requester
+	if requester.ID != userID {
+		return errors.New("authenticated user mismatch")
+	}
+
+	// 5. Check permission
+	// if requester.ID != doc.UserID && requester.Role != user.RoleAdmin {
+	// 	return errors.New("permission denied")
+	// }
+
+	// 6. Update document status
+	folderID, err := UpdateDocumentStatus(
+		ctx,
+		s.DB,
+		docID,
+		newStatus,
+		comment,
+	)
+	if err != nil {
+		return err
+	}
+
+	// 7. Get the user associated with the folder
+	folderUserID, err := FatchUserFromFOlder(
+		ctx,
+		s.DB,
+		folderID,
+	)
+	if err != nil {
+		return err
+	}
+
+	// 8. Check folder permission
+	if folderUserID != userID {
+		return errors.New("permission denied")
+	}
+
+	return nil
 }

@@ -1,23 +1,86 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { 
-  getDocuments, uploadDocument, deleteDocument, downloadDocument, 
-  renameDocument, moveDocument, searchDocuments, updateDocumentContent,
-  getDocumentVersions, downloadDocumentVersion, DocumentVersion 
+import { useAuth } from '@/context/AuthContext';
+import {
+  getDocuments,
+  uploadDocument,
+  deleteDocument,
+  downloadDocument,
+  renameDocument,
+  moveDocument,
+  searchDocuments,
+  updateDocumentContent,
+  getDocumentVersions,
+  downloadDocumentVersion,
+  updateDocumentStatus,
+  DocumentVersion,
 } from '@/lib/api';
 import { Document, Folder } from '@/type';
-import { Upload, Trash2, Download, FileText, Pencil, FolderInput, X, Check, RefreshCw, History } from 'lucide-react';
+import {
+  Upload,
+  Trash2,
+  Download,
+  FileText,
+  Pencil,
+  FolderInput,
+  X,
+  Check,
+  RefreshCw,
+  History,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  Undo,
+  Clock,
+  MessageSquareText,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Props {
   folderId: number;
   canUpload: boolean;
   canDelete?: boolean;
-  allFolders: Folder[]; // needed for move dropdown
+  allFolders: Folder[];
+  userRole?: string;
 }
 
-export default function DocumentManager({ folderId, canUpload, canDelete = true, allFolders }: Props) {
+const UNDO_WINDOW_MS = 5000;
+
+// ---- Robust status resolution: handles different field names / casing / value shapes ----
+function getRawStatus(doc: any): string {
+  const candidate =
+    doc?.status ??
+    doc?.review_status ??
+    doc?.approval_status ??
+    doc?.state ??
+    doc?.doc_status ??
+    '';
+
+  // Handle nested shapes like { status: { value: 'approved' } }
+  if (candidate && typeof candidate === 'object') {
+    return String(candidate.value ?? candidate.name ?? '').trim().toLowerCase();
+  }
+
+  return String(candidate ?? '').trim().toLowerCase();
+}
+
+function getRawComment(doc: any): string {
+  return doc?.comment ?? doc?.review_comment ?? doc?.status_comment ?? '';
+}
+
+export default function DocumentManager({
+  folderId,
+  canUpload = true,
+  canDelete = true,
+  allFolders,
+  userRole: propUserRole,
+}: Props) {
+  const { user } = useAuth();
+
+  // ---- Determine effective role ----
+  const effectiveRole = propUserRole || user?.role || 'user';
+
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -27,7 +90,13 @@ export default function DocumentManager({ folderId, canUpload, canDelete = true,
   const [movingDoc, setMovingDoc] = useState<number | null>(null);
   const [updatingDocId, setUpdatingDocId] = useState<number | null>(null);
 
-  // Version History Modal State
+  const [comment, setComment] = useState<{ [docId: number]: string }>({});
+  const [processingStatus, setProcessingStatus] = useState<number | null>(null);
+
+  // ---- Undo window tracking: docId -> expiry timestamp (ms) ----
+  const [undoExpiry, setUndoExpiry] = useState<{ [docId: number]: number }>({});
+  const [now, setNow] = useState(Date.now());
+
   const [selectedDocForHistory, setSelectedDocForHistory] = useState<Document | null>(null);
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
@@ -53,6 +122,30 @@ export default function DocumentManager({ folderId, canUpload, canDelete = true,
   useEffect(() => {
     fetchDocuments();
   }, [fetchDocuments]);
+
+  // ---- Tick every 100ms while any undo window is active; clean up expired entries ----
+  useEffect(() => {
+    const activeIds = Object.keys(undoExpiry);
+    if (activeIds.length === 0) return;
+
+    const interval = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      setUndoExpiry((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        for (const id of Object.keys(next)) {
+          if (next[Number(id)] <= current) {
+            delete next[Number(id)];
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [undoExpiry]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -83,29 +176,6 @@ export default function DocumentManager({ folderId, canUpload, canDelete = true,
     } finally {
       setUpdatingDocId(null);
       e.target.value = '';
-    }
-  };
-
-  const handleOpenHistory = async (doc: Document) => {
-    setSelectedDocForHistory(doc);
-    setLoadingVersions(true);
-    try {
-      const data = await getDocumentVersions(doc.id);
-      setVersions(Array.isArray(data) ? data : []);
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to fetch version history');
-      setVersions([]);
-    } finally {
-      setLoadingVersions(false);
-    }
-  };
-
-  const handleDownloadVersionFile = async (versionId: number, docName: string) => {
-    try {
-      await downloadDocumentVersion(versionId, docName);
-      toast.success('Version downloaded');
-    } catch (error: any) {
-      toast.error(error.message || 'Failed to download version');
     }
   };
 
@@ -158,11 +228,127 @@ export default function DocumentManager({ folderId, canUpload, canDelete = true,
     }
   };
 
+  // ---- Approve / Reject: optimistic status flip + optimistic undo window, both at once ----
+  const handleStatusUpdate = async (docId: number, status: string) => {
+    const commentText = comment[docId] || '';
+    const previousDocs = documents;
+    const previousExpiry = undoExpiry[docId];
+
+    setProcessingStatus(docId);
+
+    const expiry = Date.now() + UNDO_WINDOW_MS;
+    setDocuments((prev) =>
+      prev.map((d) => (d.id === docId ? { ...d, status, comment: commentText } : d))
+    );
+    setUndoExpiry((prev) => ({ ...prev, [docId]: expiry }));
+    setNow(Date.now());
+
+    try {
+      await updateDocumentStatus(docId, status, commentText);
+      toast.success(`Document ${status}`);
+      setComment((prev) => ({ ...prev, [docId]: '' }));
+      // Re-sync with the server so we pick up whatever field names/shapes it actually returns
+      fetchDocuments();
+    } catch (error: any) {
+      toast.error(error.message || 'Status update failed');
+      setDocuments(previousDocs);
+      setUndoExpiry((prev) => {
+        const next = { ...prev };
+        if (previousExpiry) {
+          next[docId] = previousExpiry;
+        } else {
+          delete next[docId];
+        }
+        return next;
+      });
+    } finally {
+      setProcessingStatus(null);
+    }
+  };
+
+  const handleUndoStatus = async (docId: number) => {
+    const previousDocs = documents;
+    setProcessingStatus(docId);
+
+    setDocuments((prev) =>
+      prev.map((d) => (d.id === docId ? { ...d, status: 'pending', comment: '' } : d))
+    );
+    setUndoExpiry((prev) => {
+      const next = { ...prev };
+      delete next[docId];
+      return next;
+    });
+
+    try {
+      await updateDocumentStatus(docId, 'pending', '');
+      toast.success('Status undone');
+      fetchDocuments();
+    } catch (error: any) {
+      toast.error(error.message || 'Undo failed');
+      setDocuments(previousDocs);
+    } finally {
+      setProcessingStatus(null);
+    }
+  };
+
+  const handleOpenHistory = async (doc: Document) => {
+    setSelectedDocForHistory(doc);
+    setLoadingVersions(true);
+    try {
+      const data = await getDocumentVersions(doc.id);
+      setVersions(Array.isArray(data) ? data : []);
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to fetch version history');
+      setVersions([]);
+    } finally {
+      setLoadingVersions(false);
+    }
+  };
+
+  const handleDownloadVersionFile = async (versionId: number, docName: string) => {
+    try {
+      await downloadDocumentVersion(versionId, docName);
+      toast.success('Version downloaded');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to download version');
+    }
+  };
+
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return bytes + ' B';
     if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
     return (bytes / 1048576).toFixed(1) + ' MB';
   };
+
+  const renderStatusBadge = (status: string) => {
+    if (!status) return null;
+    const base =
+      'inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full mt-1';
+    let colorClass = '';
+    let Icon = AlertCircle;
+    if (status === 'approved') {
+      colorClass = 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
+      Icon = CheckCircle;
+    } else if (status === 'rejected') {
+      colorClass = 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+      Icon = XCircle;
+    } else {
+      colorClass = 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200';
+      Icon = AlertCircle;
+    }
+    return (
+      <span className={`${base} ${colorClass}`}>
+        <Icon className="w-3 h-3" />
+        {status}
+      </span>
+    );
+  };
+
+  // ---- Role check ----
+  const isManagerOrAdmin = (() => {
+    const role = effectiveRole.toLowerCase();
+    return role === 'manager' || role === 'admin';
+  })();
 
   return (
     <div className="mt-4 space-y-4">
@@ -204,134 +390,245 @@ export default function DocumentManager({ folderId, canUpload, canDelete = true,
       )}
 
       <ul className="divide-y divide-gray-200 dark:divide-gray-700">
-        {documents.map((doc) => (
-          <li key={doc.id} className="py-2 flex items-center justify-between">
-            <div className="flex items-center gap-3 min-w-0 flex-1">
-              <FileText className="w-5 h-5 text-gray-400 flex-shrink-0" />
-              <div className="min-w-0 flex-1">
-                {editingName === doc.id ? (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={newName}
-                      onChange={(e) => setNewName(e.target.value)}
-                      className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm w-full max-w-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-                      autoFocus
-                    />
-                    <button
-                      onClick={() => handleRename(doc.id)}
-                      className="text-green-600 hover:text-green-800"
-                    >
-                      <Check className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setEditingName(null)}
-                      className="text-gray-500 hover:text-gray-700"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                      {doc.name} {doc.version ? <span className="text-xs text-blue-500 font-semibold">(v{doc.version})</span> : null}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {formatFileSize(doc.size)} • {doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleDateString() : ''}
-                    </p>
-                  </>
-                )}
-              </div>
-            </div>
+        {documents.map((doc) => {
+          const normalizedStatus = getRawStatus(doc);
+          const docComment = getRawComment(doc);
+          const isFinalized = normalizedStatus === 'approved' || normalizedStatus === 'rejected';
+          const expiry = undoExpiry[doc.id];
+          const canUndo = isFinalized && !!expiry && expiry > now;
+          const remainingMs = canUndo ? Math.max(0, expiry - now) : 0;
+          const remainingSeconds = Math.ceil(remainingMs / 1000);
+          const undoProgress = canUndo ? (remainingMs / UNDO_WINDOW_MS) * 100 : 0;
 
-            <div className="flex items-center gap-2 flex-shrink-0">
-              {/* Version History Button */}
-              <button
-                onClick={() => handleOpenHistory(doc)}
-                className="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 transition"
-                title="View Version History"
-              >
-                <History className="w-4 h-4" />
-              </button>
+          // TEMPORARY DEBUG — remove once status detection is confirmed working.
+          if (typeof window !== 'undefined') {
+            console.log('🔍 doc raw fields:', {
+              id: doc.id,
+              status: (doc as any).status,
+              review_status: (doc as any).review_status,
+              approval_status: (doc as any).approval_status,
+              state: (doc as any).state,
+              comment: (doc as any).comment,
+              resolvedStatus: normalizedStatus,
+              resolvedComment: docComment,
+            });
+          }
 
-              {/* Update Content File Input (New Version) */}
-              <label 
-                className={`cursor-pointer text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 transition ${updatingDocId === doc.id ? 'opacity-50 cursor-not-allowed' : ''}`}
-                title="Upload new version"
-              >
-                <RefreshCw className={`w-4 h-4 ${updatingDocId === doc.id ? 'animate-spin' : ''}`} />
-                <input
-                  type="file"
-                  onChange={(e) => handleUpdateContent(doc.id, e)}
-                  className="hidden"
-                  disabled={updatingDocId === doc.id}
-                />
-              </label>
-
-              {/* Download */}
-              <button
-                onClick={() => handleDownload(doc)}
-                className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 transition"
-                title="Download Latest"
-              >
-                <Download className="w-4 h-4" />
-              </button>
-
-              {/* Rename */}
-              <button
-                onClick={() => {
-                  setEditingName(doc.id);
-                  setNewName(doc.name);
-                }}
-                className="text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-300 transition"
-                title="Rename"
-              >
-                <Pencil className="w-4 h-4" />
-              </button>
-
-              {/* Move */}
-              {allFolders.length > 0 && (
-                <div className="relative">
-                  <button
-                    onClick={() => setMovingDoc(movingDoc === doc.id ? null : doc.id)}
-                    className="text-purple-600 hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-300 transition"
-                    title="Move to folder"
-                  >
-                    <FolderInput className="w-4 h-4" />
-                  </button>
-                  {movingDoc === doc.id && (
-                    <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-10 max-h-60 overflow-y-auto">
-                      {allFolders.map((f) => (
+          return (
+            <li key={doc.id} className="py-2 flex flex-col gap-2">
+              {/* Main row: icon, name, actions */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <FileText className="w-5 h-5 text-gray-400 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    {editingName === doc.id ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={newName}
+                          onChange={(e) => setNewName(e.target.value)}
+                          className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm w-full max-w-xs bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                          autoFocus
+                        />
                         <button
-                          key={f.id}
-                          onClick={() => handleMove(doc.id, f.id)}
-                          className={`block w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 ${f.id === folderId ? 'text-gray-400 cursor-not-allowed' : 'text-gray-700 dark:text-gray-200'}`}
-                          disabled={f.id === folderId}
+                          onClick={() => handleRename(doc.id)}
+                          className="text-green-600 hover:text-green-800"
                         >
-                          {f.name} {f.id === folderId && '(current)'}
+                          <Check className="w-4 h-4" />
                         </button>
-                      ))}
+                        <button
+                          onClick={() => setEditingName(null)}
+                          className="text-gray-500 hover:text-gray-700"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                            {doc.name}{' '}
+                            {doc.version ? (
+                              <span className="text-xs text-blue-500 font-semibold">
+                                (v{doc.version})
+                              </span>
+                            ) : null}
+                          </p>
+                          {renderStatusBadge(normalizedStatus)}
+                        </div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {formatFileSize(doc.size)} •{' '}
+                          {doc.uploaded_at
+                            ? new Date(doc.uploaded_at).toLocaleDateString()
+                            : ''}
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Action buttons */}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => handleOpenHistory(doc)}
+                    className="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 transition"
+                    title="View Version History"
+                  >
+                    <History className="w-4 h-4" />
+                  </button>
+
+                  <label
+                    className={`cursor-pointer text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 transition ${
+                      updatingDocId === doc.id ? 'opacity-50 cursor-not-allowed' : ''
+                    }`}
+                    title="Upload new version"
+                  >
+                    <RefreshCw
+                      className={`w-4 h-4 ${updatingDocId === doc.id ? 'animate-spin' : ''}`}
+                    />
+                    <input
+                      type="file"
+                      onChange={(e) => handleUpdateContent(doc.id, e)}
+                      className="hidden"
+                      disabled={updatingDocId === doc.id}
+                    />
+                  </label>
+
+                  <button
+                    onClick={() => handleDownload(doc)}
+                    className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 transition"
+                    title="Download Latest"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setEditingName(doc.id);
+                      setNewName(doc.name);
+                    }}
+                    className="text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-300 transition"
+                    title="Rename"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+
+                  {allFolders.length > 0 && (
+                    <div className="relative">
+                      <button
+                        onClick={() =>
+                          setMovingDoc(movingDoc === doc.id ? null : doc.id)
+                        }
+                        className="text-purple-600 hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-300 transition"
+                        title="Move to folder"
+                      >
+                        <FolderInput className="w-4 h-4" />
+                      </button>
+                      {movingDoc === doc.id && (
+                        <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-10 max-h-60 overflow-y-auto">
+                          {allFolders.map((f) => (
+                            <button
+                              key={f.id}
+                              onClick={() => handleMove(doc.id, f.id)}
+                              className={`block w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 ${
+                                f.id === folderId
+                                  ? 'text-gray-400 cursor-not-allowed'
+                                  : 'text-gray-700 dark:text-gray-200'
+                              }`}
+                              disabled={f.id === folderId}
+                            >
+                              {f.name} {f.id === folderId && '(current)'}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
+                  )}
+
+                  {canDelete && (
+                    <button
+                      onClick={() => handleDelete(doc.id)}
+                      className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 transition"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* ---- Approval controls for managers/admins ---- */}
+              {isManagerOrAdmin && (
+                <div className="ml-10 mt-1">
+                  {!isFinalized ? (
+                    <div className="flex items-center gap-3">
+                      <textarea
+                        placeholder="Add a comment (optional)"
+                        value={comment[doc.id] || ''}
+                        onChange={(e) =>
+                          setComment((prev) => ({ ...prev, [doc.id]: e.target.value }))
+                        }
+                        className="flex-1 min-w-[120px] text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-white resize-none"
+                        rows={1}
+                      />
+                      <button
+                        onClick={() => handleStatusUpdate(doc.id, 'approved')}
+                        disabled={processingStatus === doc.id}
+                        className="bg-green-500 hover:bg-green-600 disabled:bg-green-300 text-white px-3 py-1.5 rounded-md text-xs flex items-center gap-1 transition"
+                      >
+                        <CheckCircle className="w-4 h-4" /> Approve
+                      </button>
+                      <button
+                        onClick={() => handleStatusUpdate(doc.id, 'rejected')}
+                        disabled={processingStatus === doc.id}
+                        className="bg-red-500 hover:bg-red-600 disabled:bg-red-300 text-white px-3 py-1.5 rounded-md text-xs flex items-center gap-1 transition"
+                      >
+                        <XCircle className="w-4 h-4" /> Reject
+                      </button>
+                    </div>
+                  ) : canUndo ? (
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => handleUndoStatus(doc.id)}
+                        disabled={processingStatus === doc.id}
+                        className="relative overflow-hidden bg-gray-600 hover:bg-gray-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5 transition"
+                      >
+                        <span
+                          className="absolute inset-y-0 left-0 bg-white/20"
+                          style={{ width: `${undoProgress}%`, transition: 'width 100ms linear' }}
+                        />
+                        <Undo className="w-4 h-4 relative z-10" />
+                        <span className="relative z-10">Undo ({remainingSeconds}s)</span>
+                      </button>
+                      <span className="text-xs text-gray-400 dark:text-gray-500">
+                        You can still change this decision
+                      </span>
+                    </div>
+                  ) : (
+                    <ReviewSummary status={normalizedStatus} comment={docComment} />
                   )}
                 </div>
               )}
 
-              {/* Delete */}
-              {canDelete && (
-                <button
-                  onClick={() => handleDelete(doc.id)}
-                  className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 transition"
-                  title="Delete"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+              {/* ---- Read-only status/comment view for regular users ---- */}
+              {!isManagerOrAdmin && (
+                <div className="ml-10 mt-1">
+                  {isFinalized ? (
+                    <ReviewSummary status={normalizedStatus} comment={docComment} />
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
+                      <Clock className="w-3.5 h-3.5" />
+                      Awaiting review
+                    </span>
+                  )}
+                </div>
               )}
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
 
-      {/* Version History Modal */}
+      {/* Version History Modal (unchanged) */}
       {selectedDocForHistory && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-xl w-full p-6 space-y-4 max-h-[80vh] flex flex-col">
@@ -359,8 +656,8 @@ export default function DocumentManager({ folderId, canUpload, canDelete = true,
               ) : (
                 <div className="space-y-2">
                   {versions.map((v) => (
-                    <div 
-                      key={v.id} 
+                    <div
+                      key={v.id}
                       className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50 flex items-center justify-between gap-4"
                     >
                       <div className="min-w-0 flex-1">
@@ -370,7 +667,10 @@ export default function DocumentManager({ folderId, canUpload, canDelete = true,
                           </p>
                         </div>
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          Uploaded: {v.created_at ? new Date(v.created_at).toLocaleString() : 'N/A'}
+                          Uploaded:{' '}
+                          {v.created_at
+                            ? new Date(v.created_at).toLocaleString()
+                            : 'N/A'}
                         </p>
                         <p className="text-xs text-gray-400 dark:text-gray-500 font-mono mt-1 truncate">
                           Hash: {v.hashed_string}
@@ -378,7 +678,12 @@ export default function DocumentManager({ folderId, canUpload, canDelete = true,
                       </div>
 
                       <button
-                        onClick={() => handleDownloadVersionFile(v.id, selectedDocForHistory.name)}
+                        onClick={() =>
+                          handleDownloadVersionFile(
+                            v.id,
+                            selectedDocForHistory.name
+                          )
+                        }
                         className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5 transition whitespace-nowrap flex-shrink-0"
                         title="Download this version"
                       >
@@ -401,6 +706,45 @@ export default function DocumentManager({ folderId, canUpload, canDelete = true,
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Shared review summary panel (used for finalized docs, both roles) ----
+function ReviewSummary({
+  status,
+  comment,
+}: {
+  status: string;
+  comment?: string | null;
+}) {
+  const isApproved = status === 'approved';
+  const Icon = isApproved ? CheckCircle : XCircle;
+  const label = isApproved ? 'Approved' : 'Rejected';
+  const wrapperClass = isApproved
+    ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+    : 'border-red-500 bg-red-50 dark:bg-red-900/20';
+  const labelClass = isApproved
+    ? 'text-green-700 dark:text-green-300'
+    : 'text-red-700 dark:text-red-300';
+
+  return (
+    <div
+      className={`rounded-md border-l-4 px-3 py-2 max-w-md ${wrapperClass}`}
+      style={{ borderRadius: '0 6px 6px 0' }}
+    >
+      <div className={`flex items-center gap-1.5 text-sm font-medium ${labelClass}`}>
+        <Icon className="w-4 h-4" />
+        {label}
+      </div>
+      {comment ? (
+        <p className="mt-1 flex items-start gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+          <MessageSquareText className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 opacity-60" />
+          <span className="italic">{comment}</span>
+        </p>
+      ) : (
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">No comment added</p>
       )}
     </div>
   );
