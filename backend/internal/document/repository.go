@@ -22,7 +22,8 @@ func InsertDocument(ctx context.Context, db *pgxpool.Pool, doc *Document) error 
 
 func GetDocumentsByFolder(ctx context.Context, db *pgxpool.Pool, folderID int64) ([]Document, error) {
 	query := `
-        SELECT id, folder_id, user_id, name, file_path, mime_type, size, uploaded_at, description, version
+        SELECT id, folder_id, user_id, name, file_path, mime_type, size, uploaded_at, description, version,
+               COALESCE(status, 'pending') AS status, COALESCE(comment, '') AS comment
         FROM documents
         WHERE folder_id = $1
         ORDER BY uploaded_at DESC
@@ -37,7 +38,8 @@ func GetDocumentsByFolder(ctx context.Context, db *pgxpool.Pool, folderID int64)
 	for rows.Next() {
 		var d Document
 		if err := rows.Scan(&d.ID, &d.FolderID, &d.UserID, &d.Name, &d.FilePath,
-			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.Version); err != nil {
+			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.Version,
+			&d.Status, &d.Comment); err != nil {
 			return nil, err
 		}
 		docs = append(docs, d)
@@ -47,7 +49,8 @@ func GetDocumentsByFolder(ctx context.Context, db *pgxpool.Pool, folderID int64)
 
 func GetDocumentByID(ctx context.Context, db *pgxpool.Pool, id int64) (*Document, error) {
 	query := `
-        SELECT id, folder_id, user_id, name, file_path, mime_type, size, uploaded_at, description, version
+        SELECT id, folder_id, user_id, name, file_path, mime_type, size, uploaded_at, description, version,
+               COALESCE(status, 'pending') AS status, COALESCE(comment, '') AS comment
         FROM documents
         WHERE id = $1
     `
@@ -55,6 +58,7 @@ func GetDocumentByID(ctx context.Context, db *pgxpool.Pool, id int64) (*Document
 	err := db.QueryRow(ctx, query, id).Scan(
 		&d.ID, &d.FolderID, &d.UserID, &d.Name, &d.FilePath,
 		&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.Version,
+		&d.Status, &d.Comment,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, errors.New("document not found")
@@ -107,13 +111,15 @@ func SearchDocuments(ctx context.Context, db *pgxpool.Pool, searchTerm string, f
 	var query string
 	var args []interface{}
 	if folderID != nil {
-		query = `SELECT id, folder_id, user_id, name, file_path, mime_type, size, uploaded_at, description, version
+		query = `SELECT id, folder_id, user_id, name, file_path, mime_type, size, uploaded_at, description, version,
+                        COALESCE(status, 'pending') AS status, COALESCE(comment, '') AS comment
                  FROM documents
                  WHERE name ILIKE $1 AND folder_id = $2
                  ORDER BY uploaded_at DESC`
 		args = append(args, "%"+searchTerm+"%", *folderID)
 	} else {
-		query = `SELECT id, folder_id, user_id, name, file_path, mime_type, size, uploaded_at, description, version
+		query = `SELECT id, folder_id, user_id, name, file_path, mime_type, size, uploaded_at, description, version,
+                        COALESCE(status, 'pending') AS status, COALESCE(comment, '') AS comment
                  FROM documents
                  WHERE name ILIKE $1
                  ORDER BY uploaded_at DESC`
@@ -128,13 +134,15 @@ func SearchDocuments(ctx context.Context, db *pgxpool.Pool, searchTerm string, f
 	for rows.Next() {
 		var d Document
 		if err := rows.Scan(&d.ID, &d.FolderID, &d.UserID, &d.Name, &d.FilePath,
-			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.Version); err != nil {
+			&d.MimeType, &d.Size, &d.UploadedAt, &d.Description, &d.Version,
+			&d.Status, &d.Comment); err != nil {
 			return nil, err
 		}
 		docs = append(docs, d)
 	}
 	return docs, rows.Err()
 }
+
 func UpdateDocumentStatus(
 	ctx context.Context,
 	db *pgxpool.Pool,
@@ -162,6 +170,7 @@ func UpdateDocumentStatus(
 
 	return folderID, nil
 }
+
 func FatchUserFromFOlder(ctx context.Context, db *pgxpool.Pool, folderID int64) (int64, error) {
 	query := `
 		SELECT created_by

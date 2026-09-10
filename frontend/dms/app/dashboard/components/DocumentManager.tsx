@@ -31,9 +31,9 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
-  Undo,
   Clock,
   MessageSquareText,
+  ShieldCheck,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -45,9 +45,7 @@ interface Props {
   userRole?: string;
 }
 
-const UNDO_WINDOW_MS = 5000;
-
-// ---- Robust status resolution: handles different field names / casing / value shapes ----
+// ---- Robust status resolution ----
 function getRawStatus(doc: any): string {
   const candidate =
     doc?.status ??
@@ -57,7 +55,6 @@ function getRawStatus(doc: any): string {
     doc?.doc_status ??
     '';
 
-  // Handle nested shapes like { status: { value: 'approved' } }
   if (candidate && typeof candidate === 'object') {
     return String(candidate.value ?? candidate.name ?? '').trim().toLowerCase();
   }
@@ -77,8 +74,6 @@ export default function DocumentManager({
   userRole: propUserRole,
 }: Props) {
   const { user } = useAuth();
-
-  // ---- Determine effective role ----
   const effectiveRole = propUserRole || user?.role || 'user';
 
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -93,14 +88,17 @@ export default function DocumentManager({
   const [comment, setComment] = useState<{ [docId: number]: string }>({});
   const [processingStatus, setProcessingStatus] = useState<number | null>(null);
 
-  // ---- Undo window tracking: docId -> expiry timestamp (ms) ----
-  const [undoExpiry, setUndoExpiry] = useState<{ [docId: number]: number }>({});
-  const [now, setNow] = useState(Date.now());
+  // Which document's "Update Status" editor (comment + Approve/Reject) is
+  // currently open. Only one at a time, and only relevant for managers/admins.
+  const [statusEditorOpenFor, setStatusEditorOpenFor] = useState<number | null>(null);
 
   const [selectedDocForHistory, setSelectedDocForHistory] = useState<Document | null>(null);
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
 
+  // Fetch all documents, then each row extracts its own status via
+  // getRawStatus/getRawComment at render time. Always trusts the DB —
+  // no local caching or overriding of status.
   const fetchDocuments = useCallback(async () => {
     setLoading(true);
     try {
@@ -122,30 +120,6 @@ export default function DocumentManager({
   useEffect(() => {
     fetchDocuments();
   }, [fetchDocuments]);
-
-  // ---- Tick every 100ms while any undo window is active; clean up expired entries ----
-  useEffect(() => {
-    const activeIds = Object.keys(undoExpiry);
-    if (activeIds.length === 0) return;
-
-    const interval = setInterval(() => {
-      const current = Date.now();
-      setNow(current);
-      setUndoExpiry((prev) => {
-        const next = { ...prev };
-        let changed = false;
-        for (const id of Object.keys(next)) {
-          if (next[Number(id)] <= current) {
-            delete next[Number(id)];
-            changed = true;
-          }
-        }
-        return changed ? next : prev;
-      });
-    }, 100);
-
-    return () => clearInterval(interval);
-  }, [undoExpiry]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -228,63 +202,32 @@ export default function DocumentManager({
     }
   };
 
-  // ---- Approve / Reject: optimistic status flip + optimistic undo window, both at once ----
+  // ---- Approve / Reject: manager/admin can do this anytime, including
+  // changing a previous decision. Closes the inline editor on success. ----
   const handleStatusUpdate = async (docId: number, status: string) => {
     const commentText = comment[docId] || '';
     const previousDocs = documents;
-    const previousExpiry = undoExpiry[docId];
 
     setProcessingStatus(docId);
 
-    const expiry = Date.now() + UNDO_WINDOW_MS;
+    // Optimistic update so the UI reacts instantly.
     setDocuments((prev) =>
-      prev.map((d) => (d.id === docId ? { ...d, status, comment: commentText } : d))
+      prev.map((d) =>
+        d.id === docId ? { ...d, status, comment: commentText } : d
+      )
     );
-    setUndoExpiry((prev) => ({ ...prev, [docId]: expiry }));
-    setNow(Date.now());
 
     try {
       await updateDocumentStatus(docId, status, commentText);
       toast.success(`Document ${status}`);
       setComment((prev) => ({ ...prev, [docId]: '' }));
-      // Re-sync with the server so we pick up whatever field names/shapes it actually returns
+      setStatusEditorOpenFor(null);
+      // Re-sync with the server — the DB is the single source of truth.
       fetchDocuments();
     } catch (error: any) {
       toast.error(error.message || 'Status update failed');
-      setDocuments(previousDocs);
-      setUndoExpiry((prev) => {
-        const next = { ...prev };
-        if (previousExpiry) {
-          next[docId] = previousExpiry;
-        } else {
-          delete next[docId];
-        }
-        return next;
-      });
-    } finally {
-      setProcessingStatus(null);
-    }
-  };
-
-  const handleUndoStatus = async (docId: number) => {
-    const previousDocs = documents;
-    setProcessingStatus(docId);
-
-    setDocuments((prev) =>
-      prev.map((d) => (d.id === docId ? { ...d, status: 'pending', comment: '' } : d))
-    );
-    setUndoExpiry((prev) => {
-      const next = { ...prev };
-      delete next[docId];
-      return next;
-    });
-
-    try {
-      await updateDocumentStatus(docId, 'pending', '');
-      toast.success('Status undone');
-      fetchDocuments();
-    } catch (error: any) {
-      toast.error(error.message || 'Undo failed');
+      // Revert the optimistic change on failure; keep the editor open
+      // so the manager can retry without losing their comment.
       setDocuments(previousDocs);
     } finally {
       setProcessingStatus(null);
@@ -344,7 +287,6 @@ export default function DocumentManager({
     );
   };
 
-  // ---- Role check ----
   const isManagerOrAdmin = (() => {
     const role = effectiveRole.toLowerCase();
     return role === 'manager' || role === 'admin';
@@ -393,26 +335,9 @@ export default function DocumentManager({
         {documents.map((doc) => {
           const normalizedStatus = getRawStatus(doc);
           const docComment = getRawComment(doc);
-          const isFinalized = normalizedStatus === 'approved' || normalizedStatus === 'rejected';
-          const expiry = undoExpiry[doc.id];
-          const canUndo = isFinalized && !!expiry && expiry > now;
-          const remainingMs = canUndo ? Math.max(0, expiry - now) : 0;
-          const remainingSeconds = Math.ceil(remainingMs / 1000);
-          const undoProgress = canUndo ? (remainingMs / UNDO_WINDOW_MS) * 100 : 0;
-
-          // TEMPORARY DEBUG — remove once status detection is confirmed working.
-          if (typeof window !== 'undefined') {
-            console.log('🔍 doc raw fields:', {
-              id: doc.id,
-              status: (doc as any).status,
-              review_status: (doc as any).review_status,
-              approval_status: (doc as any).approval_status,
-              state: (doc as any).state,
-              comment: (doc as any).comment,
-              resolvedStatus: normalizedStatus,
-              resolvedComment: docComment,
-            });
-          }
+          const isFinalized =
+            normalizedStatus === 'approved' || normalizedStatus === 'rejected';
+          const isEditingStatus = statusEditorOpenFor === doc.id;
 
           return (
             <li key={doc.id} className="py-2 flex flex-col gap-2">
@@ -557,10 +482,21 @@ export default function DocumentManager({
                 </div>
               </div>
 
-              {/* ---- Approval controls for managers/admins ---- */}
+              {/* ---- Manager/Admin: status + comment (if decided) plus an
+                   "Update Status" button that opens Approve/Reject controls,
+                   usable anytime — even to change a prior decision. ---- */}
               {isManagerOrAdmin && (
-                <div className="ml-10 mt-1">
-                  {!isFinalized ? (
+                <div className="ml-10 mt-1 space-y-2">
+                  {isFinalized ? (
+                    <ReviewSummary status={normalizedStatus} comment={docComment} />
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
+                      <Clock className="w-3.5 h-3.5" />
+                      Waiting for approval
+                    </span>
+                  )}
+
+                  {isEditingStatus ? (
                     <div className="flex items-center gap-3">
                       <textarea
                         placeholder="Add a comment (optional)"
@@ -570,6 +506,7 @@ export default function DocumentManager({
                         }
                         className="flex-1 min-w-[120px] text-sm border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-white resize-none"
                         rows={1}
+                        autoFocus
                       />
                       <button
                         onClick={() => handleStatusUpdate(doc.id, 'approved')}
@@ -585,32 +522,29 @@ export default function DocumentManager({
                       >
                         <XCircle className="w-4 h-4" /> Reject
                       </button>
-                    </div>
-                  ) : canUndo ? (
-                    <div className="flex items-center gap-3">
                       <button
-                        onClick={() => handleUndoStatus(doc.id)}
+                        onClick={() => setStatusEditorOpenFor(null)}
                         disabled={processingStatus === doc.id}
-                        className="relative overflow-hidden bg-gray-600 hover:bg-gray-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-md text-xs flex items-center gap-1.5 transition"
+                        className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition"
+                        title="Cancel"
                       >
-                        <span
-                          className="absolute inset-y-0 left-0 bg-white/20"
-                          style={{ width: `${undoProgress}%`, transition: 'width 100ms linear' }}
-                        />
-                        <Undo className="w-4 h-4 relative z-10" />
-                        <span className="relative z-10">Undo ({remainingSeconds}s)</span>
+                        <X className="w-4 h-4" />
                       </button>
-                      <span className="text-xs text-gray-400 dark:text-gray-500">
-                        You can still change this decision
-                      </span>
                     </div>
                   ) : (
-                    <ReviewSummary status={normalizedStatus} comment={docComment} />
+                    <button
+                      onClick={() => setStatusEditorOpenFor(doc.id)}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 border border-indigo-200 dark:border-indigo-800 rounded-md px-2.5 py-1 transition"
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      Update Status
+                    </button>
                   )}
                 </div>
               )}
 
-              {/* ---- Read-only status/comment view for regular users ---- */}
+              {/* ---- Regular user: fetch-and-display only, read-only,
+                   never any buttons regardless of status. ---- */}
               {!isManagerOrAdmin && (
                 <div className="ml-10 mt-1">
                   {isFinalized ? (
@@ -618,7 +552,7 @@ export default function DocumentManager({
                   ) : (
                     <span className="inline-flex items-center gap-1.5 text-xs text-gray-400 dark:text-gray-500">
                       <Clock className="w-3.5 h-3.5" />
-                      Awaiting review
+                      Waiting for approval
                     </span>
                   )}
                 </div>
@@ -711,7 +645,7 @@ export default function DocumentManager({
   );
 }
 
-// ---- Shared review summary panel (used for finalized docs, both roles) ----
+// ---- Shared review summary panel ----
 function ReviewSummary({
   status,
   comment,

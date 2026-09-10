@@ -14,5 +14,5 @@ type Document struct {
 	Description string    `json:"description,omitempty"`
 	Version     int       `json:"version"`
 	Status      string    `json:"status"`
-	Comment     string    `json:"comment,omitempty"`
+	Comment     string    `json:"comment"`
 }
