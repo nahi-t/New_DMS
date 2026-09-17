@@ -10,9 +10,14 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!isLoading) {
-      router.push(user ? '/dashboard' : '/login');
+      router.replace(user ? '/dashboard' : '/login');
     }
   }, [user, isLoading, router]);
 
-  return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+  // Keep rendering loading state until auth status is determined
+  return (
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+    </div>
+  );
 }
