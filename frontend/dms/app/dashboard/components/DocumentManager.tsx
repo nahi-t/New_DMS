@@ -300,7 +300,7 @@ export default function DocumentManager({
     }
   };
 
-  const handleDownloadVersionFile = async (versionId: number, docName: string) => {
+  const handleDownloadVersionFile = async (versionId: string, docName: string) => {
     try {
       await downloadDocumentVersion(versionId, docName);
       toast.success('Version downloaded');
