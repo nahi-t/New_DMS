@@ -1,9 +1,9 @@
 
 import { getTokenCookie, removeTokenCookie, removeUserStorage } from './utils';
-import { LoginResponse, User, Folder, Document, ApiError } from '@/type';
+import { LoginResponse, User, Folder, Document, ApiError, AuditLogFilters, AuditLogPage } from '@/type';
 
-// const API_BASE = 'http://localhost:8080/api';
-const API_BASE='https://new-dms.onrender.com/api'
+const API_BASE = 'http://localhost:8080/api';
+// const API_BASE='https://new-dms.onrender.com/api'
 
 type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
@@ -406,3 +406,56 @@ export const deleteDocumentVersion = (versionId: string) =>
  */
 export const getAllDocumentVersions = () =>
   fetchWithAuth<DocumentVersion[]>('/versions');
+
+/* ================================================================== */
+/*  Audit Log                                                          */
+/* ================================================================== */
+
+/**
+ * Fetch a page of audit log events (admin only).
+ *
+ * GET /auditlogs?limit=&offset=&user_id=&event=&from=&to=
+ *
+ * All query params are optional. Server defaults:
+ *   limit = 50  (max 500)
+ *   offset = 0
+ */
+export const getAuditLogs = (filters: AuditLogFilters = {}) => {
+  const params = new URLSearchParams();
+
+  if (filters.limit !== undefined) params.set('limit', String(filters.limit));
+  if (filters.offset !== undefined) params.set('offset', String(filters.offset));
+  if (filters.user_id !== undefined && filters.user_id !== '') {
+    params.set('user_id', String(filters.user_id));
+  }
+  if (filters.event) params.set('event', filters.event);
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+
+  const qs = params.toString();
+  const url = qs ? `/auditlogs?${qs}` : '/auditlogs';
+
+  return fetchWithAuth<AuditLogPage>(url, 'GET');
+};
+
+export const AUDIT_EVENTS = {
+  USER_LOGIN: 'user.login',
+  USER_LOGOUT: 'user.logout',
+  USER_LOGIN_FAILED: 'user.login.failed',
+
+  DOCUMENT_CREATE: 'document.create',
+  DOCUMENT_VIEW: 'document.view',
+  DOCUMENT_DOWNLOAD: 'document.download',
+  DOCUMENT_UPDATE: 'document.update',
+  DOCUMENT_DELETE: 'document.delete',
+  DOCUMENT_SHARE: 'document.share',
+
+  PERMISSION_GRANT: 'permission.grant',
+  PERMISSION_REVOKE: 'permission.revoke',
+  DOCUMENT_STATUS_UPDATE: 'document.status.update',
+  DOCUMENT_VERSION_LIST: 'document.version.list',
+  DOCUMENT_VERSION_RESTORE: 'document.version.restore',
+  DOCUMENT_SEARCH: 'document.search',
+  DOCUMENT_MOVE: 'document.move',
+  DOCUMENT_RENAME: 'document.rename',
+} as const;

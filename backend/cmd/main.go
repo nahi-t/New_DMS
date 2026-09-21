@@ -132,6 +132,7 @@ import (
 	"os"
 	"time"
 
+	auditlog "github.com/docmanage_new/internal/auditLog"
 	"github.com/docmanage_new/internal/auth"
 	"github.com/docmanage_new/internal/document"
 	"github.com/docmanage_new/internal/documentversion"
@@ -232,7 +233,7 @@ func main() {
 
 	/* -------------------------------------------------------------- */
 	/*  Document version — repo + storage + service + handler          */
-	/*  ⚠️  Order matters: StorageManager must be created BEFORE        */
+	/*   Order matters: StorageManager must be created BEFORE        */
 	/*      the Service that depends on it.                            */
 	/* -------------------------------------------------------------- */
 
@@ -251,8 +252,11 @@ func main() {
 	/* -------------------------------------------------------------- */
 	/*  Document — handler depends on the version service              */
 	/* -------------------------------------------------------------- */
+	auditLogRepo := auditlog.NewRepository(db)
+	auditLogService := auditlog.NewService(auditLogRepo)
+	auditHandler := auditlog.NewAuditHandler(auditLogService)
 
-	docHandler := document.NewHandler(db, versionSvc)
+	docHandler := document.NewHandler(db, versionSvc, auditLogService)
 
 	/* -------------------------------------------------------------- */
 	/*  Folder                                                         */
@@ -274,6 +278,7 @@ func main() {
 	auth.SetupAuthRoutes(mux, authHandler)
 	document.RegisterRoutes(mux, docHandler, authMW)
 	documentversion.RegisterDocumentVersionRoutes(mux, versionHandler, authMW)
+	auditlog.SetUpAuditLogDisplay(mux, auditHandler, authMW)
 
 	log.Println("Server running on http://localhost:8080")
 	if err := http.ListenAndServe(":8080", handlerWithCORS); err != nil {

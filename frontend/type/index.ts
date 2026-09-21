@@ -40,3 +40,30 @@ export interface Document {
 comment?:string;
   status?: string; 
 }
+
+export interface AuditLog {
+  id: number;
+  user_id: number;
+  user_name: string;
+  event: string;
+  event_happened_time: string; // ISO 8601
+  created_at: string;          // ISO 8601
+}
+
+export interface AuditLogFilters {
+  limit?: number;
+  offset?: number;
+  user_id?: number | string;
+  event?: string;
+  /** RFC3339 timestamp, e.g. "2026-09-21T00:00:00Z" */
+  from?: string;
+  /** RFC3339 timestamp */
+  to?: string;
+}
+
+export interface AuditLogPage {
+  data: AuditLog[];
+  total: number;
+  limit: number;
+  offset: number;
+}

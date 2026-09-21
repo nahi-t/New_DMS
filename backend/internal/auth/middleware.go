@@ -10,8 +10,9 @@ import (
 type contextKey string
 
 const (
-	UserIDKey contextKey = "user_id"
-	RoleKey   contextKey = "role"
+	UserIDKey   contextKey = "user_id"
+	RoleKey     contextKey = "role"
+	UsernameKey contextKey = "username"
 )
 
 type Middleware struct {
@@ -44,6 +45,7 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 
 		ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
 		ctx = context.WithValue(ctx, RoleKey, claims.Role)
+		ctx = context.WithValue(ctx, UsernameKey, claims.Username)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -82,4 +84,11 @@ func GetRoleFromContext(ctx context.Context) (string, error) {
 		return "", errors.New("role not found in context")
 	}
 	return role, nil
+}
+func UsernameFromContext(ctx context.Context) (string, error) {
+	username, ok := ctx.Value(UsernameKey).(string)
+	if !ok {
+		return "", errors.New("username not found in context")
+	}
+	return username, nil
 }

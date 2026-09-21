@@ -4,13 +4,14 @@ import { useAuth } from '@/hooks/useAuth';
 import UserManagement from './components/UserManagement';
 import FolderManagement from './components/FolderManagement';
 import EditUserModal from './components/EditUserModal';
+import AuditLog from './components/AuditLog';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { getFolders, getUsers } from '@/lib/api';
 import { Folder, User } from '@/type';
 import toast from 'react-hot-toast';
 
-type TabType = 'dashboard' | 'users' | 'folders';
+type TabType = 'dashboard' | 'users' | 'folders' | 'audit';
 
 /* ------------------------------------------------------------------ */
 /*  Icons                                                              */
@@ -132,6 +133,14 @@ export default function DashboardPage() {
     fetchData();
   }, [user]);
 
+  // Safety: a non-admin must never see the audit tab, even if
+  // they try to set local state manually.
+  useEffect(() => {
+    if (!isAdmin && activeTab === 'audit') {
+      setActiveTab('dashboard');
+    }
+  }, [isAdmin, activeTab]);
+
   /* --------------------------- derived stats ---------------------- */
   const stats = {
     totalFolders: folders.length,
@@ -199,6 +208,9 @@ export default function DashboardPage() {
     { id: 'dashboard', label: 'Dashboard', icon: Icons.grid },
     { id: 'users', label: isAdmin ? 'User Directory' : 'My Profile', icon: Icons.users },
     { id: 'folders', label: 'Folders & Documents', icon: Icons.folder },
+    ...(isAdmin
+      ? [{ id: 'audit' as const, label: 'Audit Log', icon: Icons.shield }]
+      : []),
   ];
 
   return (
@@ -321,7 +333,11 @@ export default function DashboardPage() {
               </button>
               <span className="text-slate-300">{Icons.chevron}</span>
               <span className="font-medium capitalize text-slate-700">
-                {activeTab === 'folders' ? 'Folders & Documents' : activeTab}
+                {activeTab === 'folders'
+                  ? 'Folders & Documents'
+                  : activeTab === 'audit'
+                  ? 'Audit Log'
+                  : activeTab}
               </span>
             </nav>
 
@@ -384,6 +400,19 @@ export default function DashboardPage() {
                           {Icons.arrowRight}
                         </span>
                       </button>
+
+                      {isAdmin && (
+                        <button
+                          onClick={() => goToTab('audit')}
+                          className="group inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur-md transition-all hover:-translate-y-0.5 hover:bg-white/20"
+                        >
+                          <span className="text-white/80">{Icons.shield}</span>
+                          Audit Log
+                          <span className="text-white/60 transition-transform group-hover:translate-x-0.5">
+                            {Icons.arrowRight}
+                          </span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </section>
@@ -391,7 +420,6 @@ export default function DashboardPage() {
                 {/* ---- ADMIN-ONLY STATISTICS ---- */}
                 {isAdmin && (
                   <>
-                    {/* Section label */}
                     <div className="flex items-center gap-2.5 pt-2">
                       <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-md shadow-orange-500/20">
                         {Icons.crown}
@@ -404,7 +432,6 @@ export default function DashboardPage() {
                       </div>
                     </div>
 
-                    {/* Stat cards grid */}
                     <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
                       <StatCard
                         label="Total Folders"
@@ -436,9 +463,7 @@ export default function DashboardPage() {
                       />
                     </div>
 
-                    {/* Recent activity + breakdown */}
                     <div className="grid grid-cols-1 gap-7 xl:grid-cols-2">
-                      {/* Recent folders */}
                       <section className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                         <header className="flex items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/70 px-6 py-4">
                           <div className="flex items-center gap-2.5">
@@ -486,7 +511,6 @@ export default function DashboardPage() {
                         </div>
                       </section>
 
-                      {/* Role distribution */}
                       <section className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                         <header className="flex items-center gap-2.5 border-b border-slate-100 bg-slate-50/70 px-6 py-4">
                           <span className="text-indigo-600">{Icons.users}</span>
@@ -564,6 +588,17 @@ export default function DashboardPage() {
                   canCreate={canCreate}
                   canDelete={isAdmin}
                 />
+              </Panel>
+            )}
+
+            {/* ============ AUDIT LOG TAB (admin only) ============ */}
+            {activeTab === 'audit' && isAdmin && (
+              <Panel
+                title="Audit Log — System Activity"
+                icon={Icons.shield}
+                iconClass="text-emerald-600"
+              >
+                <AuditLog />
               </Panel>
             )}
           </div>

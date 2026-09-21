@@ -16,8 +16,9 @@ import (
 var jwtSecret = []byte("your-super-secret-key-change-this")
 
 type Claims struct {
-	UserID int64  `json:"user_id"`
-	Role   string `json:"role"`
+	UserID   int64  `json:"user_id"`
+	Role     string `json:"role"`
+	Username string `json:"username"`
 	jwt.RegisteredClaims
 }
 
@@ -65,7 +66,7 @@ func (s *AuthService) Login(email, password string) (*AuthUser, string, error) {
 		return nil, "", errors.New("invalid email or password")
 	}
 
-	token, err := s.generateToken(u.ID, u.Role)
+	token, err := s.generateToken(u.ID, u.Role, u.Username)
 	if err != nil {
 		return nil, "", fmt.Errorf("token signing failed: %w", err)
 	}
@@ -73,10 +74,11 @@ func (s *AuthService) Login(email, password string) (*AuthUser, string, error) {
 	return &u, token, nil
 }
 
-func (s *AuthService) generateToken(userID int64, role string) (string, error) {
+func (s *AuthService) generateToken(userID int64, role string, username string) (string, error) {
 	claims := &Claims{
-		UserID: userID,
-		Role:   role,
+		Username: username,
+		UserID:   userID,
+		Role:     role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
