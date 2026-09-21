@@ -23,14 +23,17 @@ function formatTime(iso: string): string {
 }
 
 function eventTint(event: string): string {
+  if (event === 'user.login.failed')
+    return 'bg-rose-50 text-rose-700 ring-rose-100';
+  if (event === 'user.login')
+    return 'bg-emerald-50 text-emerald-700 ring-emerald-100';
+  if (event === 'user.logout')
+    return 'bg-slate-100 text-slate-700 ring-slate-200';
+
   if (event.includes('delete')) return 'bg-rose-50 text-rose-700 ring-rose-100';
   if (event.includes('create')) return 'bg-emerald-50 text-emerald-700 ring-emerald-100';
   if (event.includes('update') || event.includes('restore'))
     return 'bg-amber-50 text-amber-700 ring-amber-100';
-  if (event.includes('login') && event.includes('failed'))
-    return 'bg-rose-50 text-rose-700 ring-rose-100';
-  if (event.includes('login') || event.includes('logout'))
-    return 'bg-indigo-50 text-indigo-700 ring-indigo-100';
   if (event.includes('download') || event.includes('view'))
     return 'bg-blue-50 text-blue-700 ring-blue-100';
   if (event.includes('permission')) return 'bg-purple-50 text-purple-700 ring-purple-100';
@@ -48,7 +51,7 @@ export default function AuditLog() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const [page, setPage] = useState(0); // zero-based
+  const [page, setPage] = useState(0);
   const [userFilter, setUserFilter] = useState('');
   const [eventFilter, setEventFilter] = useState('');
   const [fromFilter, setFromFilter] = useState('');
@@ -68,7 +71,6 @@ export default function AuditLog() {
       });
       setLogs(result.data ?? []);
       setTotal(result.total ?? 0);
-      console.log('audit page:', result);
     } catch (err: any) {
       if (err.message?.toLowerCase().includes('forbidden') || err.message?.includes('403')) {
         toast.error('You do not have permission to view audit logs.');
@@ -86,7 +88,6 @@ export default function AuditLog() {
     fetchLogs();
   }, [fetchLogs]);
 
-  // Reset to first page when filters change
   useEffect(() => {
     setPage(0);
   }, [userFilter, eventFilter, fromFilter, toFilter]);
@@ -99,7 +100,11 @@ export default function AuditLog() {
   const eventOptions = useMemo(
     () =>
       Object.entries(AUDIT_EVENTS).map(([key, value]) => ({
-        label: key.replaceAll('_', ' ').toLowerCase(),
+        label: key
+          .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+          .replaceAll('_', ' ')
+          .toLowerCase()
+          .trim(),
         value,
       })),
     []
@@ -214,14 +219,20 @@ export default function AuditLog() {
                   User
                 </th>
                 <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  IP Address
+                </th>
+                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">
                   Event
+                </th>
+                <th className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  Status
                 </th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={3} className="px-4 py-12 text-center text-slate-400">
+                  <td colSpan={5} className="px-4 py-12 text-center text-slate-400">
                     <div className="flex items-center justify-center gap-3">
                       <div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-blue-600" />
                       Loading audit events…
@@ -230,43 +241,83 @@ export default function AuditLog() {
                 </tr>
               ) : logs.length === 0 ? (
                 <tr>
-                  <td colSpan={3} className="px-4 py-12 text-center text-slate-400">
+                  <td colSpan={5} className="px-4 py-12 text-center text-slate-400">
                     No audit events found.
                   </td>
                 </tr>
               ) : (
-                logs.map((log) => (
-                  <tr
-                    key={log.id}
-                    className="border-b border-slate-100 transition-colors last:border-b-0 hover:bg-slate-50/60"
-                  >
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">
-                      {formatTime(log.event_happened_time)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-[11px] font-bold uppercase text-white">
-                          {log.user_name?.charAt(0) || '?'}
-                        </span>
-                        <div className="min-w-0">
-                          <p className="truncate font-medium text-slate-800">
-                            {log.user_name || 'Unknown'}
-                          </p>
-                          <p className="text-[11px] text-slate-400">ID: {log.user_id}</p>
+                logs.map((log) => {
+                  const isFailedLogin = log.event === 'user.login.failed';
+                  const isFailed = log.success === false;
+                  return (
+                    <tr
+                      key={log.id}
+                      className={`border-b border-slate-100 transition-colors last:border-b-0 ${
+                        isFailed ? 'bg-rose-50/40 hover:bg-rose-50/70' : 'hover:bg-slate-50/60'
+                      }`}
+                    >
+                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+                        {formatTime(log.event_happened_time)}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          <span
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold uppercase text-white ${
+                              isFailedLogin
+                                ? 'bg-gradient-to-br from-rose-500 to-rose-700'
+                                : 'bg-gradient-to-br from-blue-600 to-indigo-600'
+                            }`}
+                          >
+                            {log.user_name?.charAt(0) || '?'}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-slate-800">
+                              {log.user_name || 'Unknown'}
+                            </p>
+                            <p className="text-[11px] text-slate-400">
+                              ID: {log.user_id ?? '—'}
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset ${eventTint(
-                          log.event
-                        )}`}
-                      >
-                        {log.event}
-                      </span>
-                    </td>
-                  </tr>
-                ))
+                      </td>
+
+                      <td className="whitespace-nowrap px-4 py-3">
+                        {log.ip_address ? (
+                          <code className="rounded bg-slate-100 px-2 py-1 font-mono text-[11px] text-slate-700">
+                            {log.ip_address}
+                          </code>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
+                      </td>
+
+                      <td className="px-4 py-3">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset ${eventTint(
+                            log.event
+                          )}`}
+                        >
+                          {log.event}
+                        </span>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        {isFailed ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-bold text-rose-700">
+                            <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                            Failed
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-bold text-emerald-700">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            Success
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

@@ -224,11 +224,13 @@ func main() {
 
 	/* -------------------------------------------------------------- */
 	/*  User + auth                                                    */
-	/* -------------------------------------------------------------- */
 
+	/* -------------------------------------------------------------- */
+	auditLogRepo := auditlog.NewRepository(db)
+	auditLogService := auditlog.NewService(auditLogRepo)
 	userHandler := user.NewUserHandler(db)
 	authservice := auth.NewAuthService(db)
-	authHandler := auth.NewAuthHandler(authservice)
+	authHandler := auth.NewAuthHandler(authservice, auditLogService)
 	authMW := auth.NewMiddleware(authservice)
 
 	/* -------------------------------------------------------------- */
@@ -252,8 +254,7 @@ func main() {
 	/* -------------------------------------------------------------- */
 	/*  Document — handler depends on the version service              */
 	/* -------------------------------------------------------------- */
-	auditLogRepo := auditlog.NewRepository(db)
-	auditLogService := auditlog.NewService(auditLogRepo)
+
 	auditHandler := auditlog.NewAuditHandler(auditLogService)
 
 	docHandler := document.NewHandler(db, versionSvc, auditLogService)

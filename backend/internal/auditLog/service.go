@@ -17,6 +17,10 @@ func NewService(repo *Repository) *Service {
 	return &Service{repo: repo}
 }
 
+/* ------------------------------------------------------------------ */
+/*  Context-based (user already authenticated)                         */
+/* ------------------------------------------------------------------ */
+
 // Log extracts userID and username from ctx and writes the audit event.
 func (s *Service) Log(ctx context.Context, event string) error {
 	userID, err := auth.GetUserIDFromContext(ctx)
@@ -27,7 +31,16 @@ func (s *Service) Log(ctx context.Context, event string) error {
 	if err != nil {
 		return fmt.Errorf("audit: %w", err)
 	}
-	return s.repo.InsertAuditLog(ctx, userID, userName, event)
+	if userName == "" {
+		userName = fmt.Sprintf("user_%d", userID)
+	}
+
+	return s.repo.InsertAuditEntry(ctx, AuditEntry{
+		UserID:   &userID,
+		UserName: userName,
+		Event:    event,
+		Success:  true,
+	})
 }
 
 // LogTx is the transactional variant.
@@ -40,15 +53,58 @@ func (s *Service) LogTx(ctx context.Context, tx pgx.Tx, event string) error {
 	if err != nil {
 		return fmt.Errorf("audit: %w", err)
 	}
-	return s.repo.InsertAuditLogTx(ctx, tx, userID, userName, event)
+	if userName == "" {
+		userName = fmt.Sprintf("user_%d", userID)
+	}
+
+	if err := s.repo.InsertAuditLogTx(ctx, tx, userID, userName, event); err != nil {
+		return err
+	}
+	return nil
 }
 
 // LogAsSystem is for background jobs, cron, migrations — no request context.
 func (s *Service) LogAsSystem(ctx context.Context, event string) error {
-	const systemUserID int64 = 0
 	const systemUserName = "system"
-	return s.repo.InsertAuditLog(ctx, systemUserID, systemUserName, event)
+	return s.repo.InsertAuditEntry(ctx, AuditEntry{
+		UserID:   nil, // system has no user row
+		UserName: systemUserName,
+		Event:    event,
+		Success:  true,
+	})
 }
+
+/* ------------------------------------------------------------------ */
+/*  Login / logout (no user in context yet)                            */
+/* ------------------------------------------------------------------ */
+
+// LogLogin records a login attempt.
+// Pass nil for userID when the login failed and no user was identified.
+func (s *Service) LogLogin(
+	ctx context.Context,
+	userID *int64,
+	userName string,
+	event string,
+	ip string,
+	userAgent string,
+	success bool,
+) error {
+	if userName == "" {
+		userName = "unknown"
+	}
+	return s.repo.InsertAuditEntry(ctx, AuditEntry{
+		UserID:    userID,
+		UserName:  userName,
+		Event:     event,
+		IP:        ip,
+		UserAgent: userAgent,
+		Success:   success,
+	})
+}
+
+/* ------------------------------------------------------------------ */
+/*  Query                                                              */
+/* ------------------------------------------------------------------ */
 
 var ErrNoUser = errors.New("no user in context")
 
@@ -56,7 +112,6 @@ func (s *Service) GetAuditLogs(
 	ctx context.Context,
 	f AuditFilter,
 ) ([]AuditLog, int, error) {
-	// Clamp values defensively — never trust the handler alone.
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}

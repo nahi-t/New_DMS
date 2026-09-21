@@ -20,4 +20,5 @@ const (
 	EventDocumentSearch         = "document.search"
 	EventDocumentMove           = "document.move"
 	EventDocumentRename         = "document.rename"
+	EventUserLoginSuccess       = "user.login.success"
 )

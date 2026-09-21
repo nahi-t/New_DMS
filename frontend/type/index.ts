@@ -41,13 +41,19 @@ comment?:string;
   status?: string; 
 }
 
+// src/type.ts
+
 export interface AuditLog {
   id: number;
-  user_id: number;
+  user_id: number | null;      // nullable — failed logins have no user id
   user_name: string;
   event: string;
-  event_happened_time: string; // ISO 8601
-  created_at: string;          // ISO 8601
+  event_happened_time: string;
+  created_at: string;
+
+  ip_address?: string | null;
+  user_agent?: string | null;
+  success: boolean;
 }
 
 export interface AuditLogFilters {
@@ -55,9 +61,7 @@ export interface AuditLogFilters {
   offset?: number;
   user_id?: number | string;
   event?: string;
-  /** RFC3339 timestamp, e.g. "2026-09-21T00:00:00Z" */
   from?: string;
-  /** RFC3339 timestamp */
   to?: string;
 }
 
