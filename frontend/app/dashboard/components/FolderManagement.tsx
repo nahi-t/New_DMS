@@ -1,6 +1,6 @@
 'use client';
 
-import { Folder } from '@/type';
+import { Folder, User } from '@/type';
 import { deleteFolder } from '@/lib/api';
 import {
   Trash2,
@@ -10,7 +10,6 @@ import {
   ChevronRight,
   Folder as FolderIcon,
   FolderOpen,
-  User as UserIcon,
   Calendar,
   FileText,
 } from 'lucide-react';
@@ -25,6 +24,8 @@ interface Props {
   onFolderChange: () => void;
   canCreate: boolean;
   canDelete: boolean;
+  users: User[];            // ← new
+  currentUser: User | null; // ← new
 }
 
 export default function FolderManagement({
@@ -32,6 +33,8 @@ export default function FolderManagement({
   onFolderChange,
   canCreate,
   canDelete,
+  users,
+  currentUser,
 }: Props) {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingFolder, setEditingFolder] = useState<{ id: number; name: string } | null>(null);
@@ -157,7 +160,6 @@ export default function FolderManagement({
                             onClick={() => toggleExpand(f.id)}
                             className="flex w-full items-center gap-3 text-left"
                           >
-                            {/* Chevron */}
                             <span
                               className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition-all ${
                                 isExpanded
@@ -172,7 +174,6 @@ export default function FolderManagement({
                               )}
                             </span>
 
-                            {/* Folder icon */}
                             <span
                               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-all ${
                                 isExpanded
@@ -187,7 +188,6 @@ export default function FolderManagement({
                               )}
                             </span>
 
-                            {/* Name + meta */}
                             <span className="min-w-0 flex-1">
                               <span
                                 className={`block truncate text-sm font-semibold transition-colors ${
@@ -256,7 +256,6 @@ export default function FolderManagement({
                             colSpan={colSpan}
                             className="border-l-2 border-blue-500 bg-slate-50/50 px-5 py-5"
                           >
-                            {/* Folder name heading inside expanded area */}
                             <div className="mb-4 flex items-center gap-2.5">
                               <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 text-white shadow-sm">
                                 <FolderOpen className="h-4 w-4" />
@@ -271,12 +270,16 @@ export default function FolderManagement({
                               </div>
                             </div>
 
+                            {/* Pass users + currentUser down so DocumentManager
+                                can open the ShareModal from any document row. */}
                             <DocumentManager
-                              folderId={f.id}
-                              canUpload={true}
-                              canDelete={canDelete}
-                              allFolders={folders}
-                            />
+  folderId={f.id}
+  canUpload={true}
+  canDelete={canDelete}
+  allFolders={folders}
+  users={users}
+  userRole={currentUser?.role}
+/>
                           </td>
                         </tr>
                       )}

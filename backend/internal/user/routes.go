@@ -12,7 +12,7 @@ func SetupUserRoutes(mux *http.ServeMux, h *UserHandler, mw *auth.Middleware) {
 
 	// Admin Only: Fetch all users list
 	mux.Handle("GET /api/users", mw.Authenticate(
-		mw.RequireRole(RoleAdmin)(http.HandlerFunc(h.GetAll)),
+		mw.RequireRole(RoleAdmin, RoleManager)(http.HandlerFunc(h.GetAll)),
 	))
 
 	// Owner or Admin

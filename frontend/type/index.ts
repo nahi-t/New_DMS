@@ -71,3 +71,25 @@ export interface AuditLogPage {
   limit: number;
   offset: number;
 }
+
+// @/type.ts
+
+
+
+export interface DocumentShare {
+  id: number;
+  document_id: number;
+  document_name: string;
+  document_description?: string;
+  folder_id: number;
+  version: number;
+
+  user_id: number;
+  user_name: string;
+  user_email: string;
+
+  permission: 'viewer' | 'editor';
+  shared_by: number;
+  shared_by_name: string;
+  shared_at: string;
+}

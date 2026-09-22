@@ -5,13 +5,14 @@ import UserManagement from './components/UserManagement';
 import FolderManagement from './components/FolderManagement';
 import EditUserModal from './components/EditUserModal';
 import AuditLog from './components/AuditLog';
+import SharedWithMe from './components/SharedWithMe';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { getFolders, getUsers } from '@/lib/api';
 import { Folder, User } from '@/type';
 import toast from 'react-hot-toast';
 
-type TabType = 'dashboard' | 'users' | 'folders' | 'audit';
+type TabType = 'dashboard' | 'users' | 'folders' | 'audit' | 'shared';
 
 /* ------------------------------------------------------------------ */
 /*  Icons                                                              */
@@ -40,6 +41,11 @@ const Icons = {
   shield: (
     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+    </svg>
+  ),
+  share: (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M8.684 13.342A3 3 0 106 8a3 3 0 002.684 5.342m0 0a3 3 0 100 5.316m0-5.316l6.632 3.316M15.316 6.342a3 3 0 106 0 3 3 0 00-6 0zm0 0L8.684 9.658m6.632-3.316L8.684 9.658" />
     </svg>
   ),
   logout: (
@@ -107,7 +113,9 @@ export default function DashboardPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const isAdmin = user?.role === 'admin';
-  const canCreate = user?.role === 'admin' || user?.role === 'manager';
+  const isManager = user?.role === 'manager';
+  const canCreate = isAdmin || isManager;
+  const canSeeUsers = isAdmin || isManager;
 
   const roleLabel = user?.role
     ? user.role.charAt(0).toUpperCase() + user.role.slice(1)
@@ -118,10 +126,14 @@ export default function DashboardPage() {
     try {
       const [foldersData, usersData] = await Promise.all([
         getFolders(),
-        user?.role === 'admin' ? getUsers() : Promise.resolve([]),
+        canSeeUsers ? getUsers() : Promise.resolve([]),
       ]);
+
       setFolders(foldersData);
-      if (user?.role === 'admin') setUsers(usersData);
+
+      if (canSeeUsers) {
+        setUsers(Array.isArray(usersData) ? usersData : []);
+      }
     } catch (error: any) {
       toast.error(error.message || 'Failed to load data');
     } finally {
@@ -133,8 +145,7 @@ export default function DashboardPage() {
     fetchData();
   }, [user]);
 
-  // Safety: a non-admin must never see the audit tab, even if
-  // they try to set local state manually.
+  // Safety: non-admins can't view the audit tab
   useEffect(() => {
     if (!isAdmin && activeTab === 'audit') {
       setActiveTab('dashboard');
@@ -208,6 +219,7 @@ export default function DashboardPage() {
     { id: 'dashboard', label: 'Dashboard', icon: Icons.grid },
     { id: 'users', label: isAdmin ? 'User Directory' : 'My Profile', icon: Icons.users },
     { id: 'folders', label: 'Folders & Documents', icon: Icons.folder },
+    { id: 'shared', label: 'Shared with Me', icon: Icons.share },
     ...(isAdmin
       ? [{ id: 'audit' as const, label: 'Audit Log', icon: Icons.shield }]
       : []),
@@ -215,7 +227,6 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 font-sans antialiased">
-      {/* Mobile overlay */}
       {isSidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm lg:hidden"
@@ -229,7 +240,6 @@ export default function DashboardPage() {
           isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Brand */}
         <div className="flex h-20 shrink-0 items-center gap-3 border-b border-slate-100 px-6">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-700 to-blue-500 shadow-lg shadow-blue-500/25">
             {Icons.logo}
@@ -244,7 +254,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Nav */}
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-6">
           <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">
             Navigation
@@ -276,7 +285,6 @@ export default function DashboardPage() {
           })}
         </nav>
 
-        {/* User card + logout */}
         <div className="space-y-2 border-t border-slate-100 p-4">
           <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-sm font-bold uppercase text-white shadow-sm">
@@ -303,7 +311,6 @@ export default function DashboardPage() {
 
       {/* --------------------------- Main column --------------------------- */}
       <div className="flex h-screen flex-1 flex-col overflow-hidden">
-        {/* Mobile header */}
         <header className="flex h-20 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6 lg:hidden">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-tr from-blue-700 to-blue-500">
@@ -320,7 +327,6 @@ export default function DashboardPage() {
           </button>
         </header>
 
-        {/* Scroll area */}
         <main className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-7xl space-y-7 p-6 lg:p-10">
             {/* Breadcrumb */}
@@ -337,6 +343,8 @@ export default function DashboardPage() {
                   ? 'Folders & Documents'
                   : activeTab === 'audit'
                   ? 'Audit Log'
+                  : activeTab === 'shared'
+                  ? 'Shared with Me'
                   : activeTab}
               </span>
             </nav>
@@ -344,7 +352,6 @@ export default function DashboardPage() {
             {/* ============ DASHBOARD TAB ============ */}
             {activeTab === 'dashboard' && (
               <>
-                {/* ---- Welcome hero ---- */}
                 <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-blue-700 via-indigo-600 to-blue-600 px-8 py-14 shadow-2xl shadow-blue-500/20 lg:px-16 lg:py-20">
                   <div
                     className="pointer-events-none absolute inset-0 opacity-[0.12]"
@@ -401,6 +408,17 @@ export default function DashboardPage() {
                         </span>
                       </button>
 
+                      <button
+                        onClick={() => goToTab('shared')}
+                        className="group inline-flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur-md transition-all hover:-translate-y-0.5 hover:bg-white/20"
+                      >
+                        <span className="text-white/80">{Icons.share}</span>
+                        Shared with Me
+                        <span className="text-white/60 transition-transform group-hover:translate-x-0.5">
+                          {Icons.arrowRight}
+                        </span>
+                      </button>
+
                       {isAdmin && (
                         <button
                           onClick={() => goToTab('audit')}
@@ -417,7 +435,6 @@ export default function DashboardPage() {
                   </div>
                 </section>
 
-                {/* ---- ADMIN-ONLY STATISTICS ---- */}
                 {isAdmin && (
                   <>
                     <div className="flex items-center gap-2.5 pt-2">
@@ -587,7 +604,20 @@ export default function DashboardPage() {
                   onFolderChange={fetchData}
                   canCreate={canCreate}
                   canDelete={isAdmin}
+                  users={users}
+                  currentUser={user}
                 />
+              </Panel>
+            )}
+
+            {/* ============ SHARED WITH ME TAB ============ */}
+            {activeTab === 'shared' && (
+              <Panel
+                title="Documents Shared with Me"
+                icon={Icons.share}
+                iconClass="text-purple-600"
+              >
+                <SharedWithMe />
               </Panel>
             )}
 
@@ -605,7 +635,6 @@ export default function DashboardPage() {
         </main>
       </div>
 
-      {/* Edit user modal */}
       {isModalOpen && selectedUser && (
         <EditUserModal
           user={selectedUser}

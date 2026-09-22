@@ -16,7 +16,8 @@ import {
   updateDocumentStatus,
   DocumentVersion,
 } from '@/lib/api';
-import { Document, Folder } from '@/type';
+import { Document, Folder, User } from '@/type';
+import ShareModal from './ShareModal';
 import {
   Trash2,
   Download,
@@ -41,6 +42,7 @@ import {
   Inbox,
   MessageSquareText,
   ShieldCheck,
+  Share2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -50,6 +52,7 @@ interface Props {
   canDelete?: boolean;
   allFolders: Folder[];
   userRole?: string;
+  users?: User[];
 }
 
 // ---- Robust status resolution ----
@@ -73,7 +76,7 @@ function getRawComment(doc: any): string {
   return doc?.comment ?? doc?.review_comment ?? doc?.status_comment ?? '';
 }
 
-// ---- File-type icon + color, purely visual, based on file extension ----
+// ---- File-type icon + color ----
 type FileMeta = { Icon: ComponentType<{ className?: string }>; iconClass: string; bgClass: string };
 
 function getFileMeta(name: string): FileMeta {
@@ -101,6 +104,7 @@ export default function DocumentManager({
   canDelete = true,
   allFolders,
   userRole: propUserRole,
+  users = [],
 }: Props) {
   const { user } = useAuth();
   const effectiveRole = propUserRole || user?.role || 'user';
@@ -117,17 +121,17 @@ export default function DocumentManager({
   const [comment, setComment] = useState<{ [docId: number]: string }>({});
   const [processingStatus, setProcessingStatus] = useState<number | null>(null);
 
-  // Which document's "Review" editor (comment + Approve/Reject) is currently
-  // open. Only one at a time, and only relevant for managers/admins.
   const [statusEditorOpenFor, setStatusEditorOpenFor] = useState<number | null>(null);
 
   const [selectedDocForHistory, setSelectedDocForHistory] = useState<Document | null>(null);
   const [versions, setVersions] = useState<DocumentVersion[]>([]);
   const [loadingVersions, setLoadingVersions] = useState(false);
 
+  // Which document is open in the share modal
+  const [shareTarget, setShareTarget] = useState<{ id: number; name: string } | null>(null);
+
   const moveMenuRef = useRef<HTMLDivElement | null>(null);
 
-  // Close the "move to folder" menu on an outside click or Escape.
   useEffect(() => {
     if (movingDoc === null) return;
 
@@ -148,9 +152,6 @@ export default function DocumentManager({
     };
   }, [movingDoc]);
 
-  // Fetch all documents, then each row extracts its own status via
-  // getRawStatus/getRawComment at render time. Always trusts the DB —
-  // no local caching or overriding of status.
   const fetchDocuments = useCallback(async () => {
     setLoading(true);
     try {
@@ -254,15 +255,12 @@ export default function DocumentManager({
     }
   };
 
-  // ---- Approve / Reject: manager/admin can do this anytime, including
-  // changing a previous decision. Closes the inline editor on success. ----
   const handleStatusUpdate = async (docId: number, status: string) => {
     const commentText = comment[docId] || '';
     const previousDocs = documents;
 
     setProcessingStatus(docId);
 
-    // Optimistic update so the UI reacts instantly.
     setDocuments((prev) =>
       prev.map((d) =>
         d.id === docId ? { ...d, status, comment: commentText } : d
@@ -274,12 +272,9 @@ export default function DocumentManager({
       toast.success(`Document ${status}`);
       setComment((prev) => ({ ...prev, [docId]: '' }));
       setStatusEditorOpenFor(null);
-      // Re-sync with the server — the DB is the single source of truth.
       fetchDocuments();
     } catch (error: any) {
       toast.error(error.message || 'Status update failed');
-      // Revert the optimistic change on failure; keep the editor open
-      // so the manager can retry without losing their comment.
       setDocuments(previousDocs);
     } finally {
       setProcessingStatus(null);
@@ -319,6 +314,9 @@ export default function DocumentManager({
     const role = effectiveRole.toLowerCase();
     return role === 'manager' || role === 'admin';
   })();
+
+  // Only managers/admins can share. Adjust if your backend allows members too.
+  const canShare = isManagerOrAdmin;
 
   return (
     <div className="mt-4">
@@ -403,7 +401,7 @@ export default function DocumentManager({
 
               return (
                 <li key={doc.id} className="group px-4 py-3.5">
-                  {/* Main row: icon, name, actions */}
+                  {/* Main row */}
                   <div className="flex items-center gap-3">
                     <div
                       className={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg ${bgClass}`}
@@ -462,8 +460,20 @@ export default function DocumentManager({
                       )}
                     </div>
 
-                    {/* Action buttons — always visible on touch, revealed on hover for pointer users */}
+                    {/* Action buttons */}
                     <div className="flex flex-shrink-0 items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                      {/* NEW: Share button */}
+                      {canShare && (
+                        <button
+                          onClick={() => setShareTarget({ id: doc.id, name: doc.name })}
+                          className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-purple-50 hover:text-purple-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500/40"
+                          title="Share document"
+                          aria-label="Share document"
+                        >
+                          <Share2 className="h-4 w-4" />
+                        </button>
+                      )}
+
                       <button
                         onClick={() => handleOpenHistory(doc)}
                         className="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-400/40"
@@ -570,7 +580,7 @@ export default function DocumentManager({
                     </div>
                   </div>
 
-                  {/* Review status + (manager/admin only) the review controls */}
+                  {/* Review status */}
                   <div className="ml-[52px] mt-2 space-y-2">
                     {isFinalized ? (
                       <ReviewSummary status={normalizedStatus} comment={docComment} />
@@ -723,6 +733,17 @@ export default function DocumentManager({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Share Modal */}
+      {shareTarget && user && (
+        <ShareModal
+          docId={shareTarget.id}
+          docName={shareTarget.name}
+          allUsers={users}
+          currentUserId={user.id}
+          onClose={() => setShareTarget(null)}
+        />
       )}
     </div>
   );

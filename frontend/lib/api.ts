@@ -1,9 +1,9 @@
 
 import { getTokenCookie, removeTokenCookie, removeUserStorage } from './utils';
-import { LoginResponse, User, Folder, Document, ApiError, AuditLogFilters, AuditLogPage } from '@/type';
+import { LoginResponse, User, Folder, Document, ApiError, AuditLogFilters, AuditLogPage, DocumentShare } from '@/type';
 
-// const API_BASE = 'http://localhost:8080/api';
-const API_BASE='https://new-dms.onrender.com/api'
+const API_BASE = 'http://localhost:8080/api';
+// const API_BASE='https://new-dms.onrender.com/api'
 
 type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
@@ -459,3 +459,48 @@ export const AUDIT_EVENTS = {
   DOCUMENT_MOVE: 'document.move',
   DOCUMENT_RENAME: 'document.rename',
 } as const;
+
+
+
+
+/* ================================================================== */
+/*  Document Sharing                                                   */
+/* ================================================================== */
+
+/**
+ * Share a document with a user.
+ * POST /api/documents/{id}/share
+ */
+export const shareDocument = (
+  docId: number,
+  userId: number,
+  permission: 'viewer' | 'editor'
+) =>
+  fetchWithAuth<{ message: string }>(`/documents/${docId}/share`, 'POST', {
+    user_id: userId,
+    permission,
+  });
+
+/**
+ * Remove a user's access to a document.
+ * DELETE /api/documents/{id}/share/{userId}
+ */
+export const unshareDocument = (docId: number, userId: number) =>
+  fetchWithAuth<{ message: string }>(
+    `/documents/${docId}/share/${userId}`,
+    'DELETE'
+  );
+
+/**
+ * List everyone a document is shared with.
+ * GET /api/documents/{id}/shares
+ */
+export const getDocumentShares = (docId: number) =>
+  fetchWithAuth<DocumentShare[]>(`/documents/${docId}/shares`);
+
+/**
+ * List all documents shared with the current user.
+ * GET /api/documents/shared-with-me
+ */
+export const getSharedWithMe = () =>
+  fetchWithAuth<DocumentShare[]>('/shares/shared-with-me');
