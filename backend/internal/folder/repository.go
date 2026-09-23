@@ -2,6 +2,8 @@ package folder
 
 import (
 	"context"
+	"fmt"
+
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,4 +49,28 @@ func (r *Repository) GetAll(ctx context.Context) ([]Folder, error) {
 func (r *Repository) Delete(ctx context.Context, id int64) error {
 	_, err := r.DB.Exec(ctx, `DELETE FROM folders WHERE id = $1`, id)
 	return err
+}
+
+func (r *Repository) Update(ctx context.Context, id int64, name string) (Folder, error) {
+	var folder Folder
+
+	query := `
+		UPDATE folders
+		SET name = $1, updated_at = NOW()
+		WHERE id = $2
+		RETURNING id, name, created_at, updated_at
+	`
+
+	err := r.DB.QueryRow(ctx, query, name, id).Scan(
+		&folder.ID,
+		&folder.Name,
+		&folder.CreatedAt,
+		&folder.UpdatedAt,
+	)
+	if err != nil {
+		fmt.Println("error occur in update")
+
+	}
+
+	return folder, nil
 }

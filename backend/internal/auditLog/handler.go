@@ -2,7 +2,6 @@ package auditlog
 
 import (
 	"encoding/json"
-
 	"net/http"
 	"strconv"
 	"time"
@@ -16,15 +15,26 @@ func NewAuditHandler(service *Service) *AuditHandler {
 	return &AuditHandler{service: service}
 }
 
-// GetAuditLogs returns a page of audit events.
+// GetAuditLogs returns a paginated list of audit events.
 //
-// Query params:
-//   - limit   (default 50, max 500)
-//   - offset  (default 0)
-//   - user_id (optional)
-//   - event   (optional)
-//   - from    (optional, RFC3339)
-//   - to      (optional, RFC3339)
+// @Summary      List audit logs
+// @Description  Returns a page of audit events. Only admins can call this endpoint.
+// @Description  Supports filtering by user, event type, and time range.
+// @Tags         audit
+// @Produce      json
+// @Security     BearerAuth
+// @Param        limit    query     int     false  "Page size (default 50, max 500)"  minimum(1)  maximum(500)
+// @Param        offset   query     int     false  "Offset (default 0)"              minimum(0)
+// @Param        user_id  query     int     false  "Filter by user ID"
+// @Param        event    query     string  false  "Filter by event name (exact match)"  example(user.login)
+// @Param        from     query     string  false  "Start time, RFC3339"  example(2026-09-01T00:00:00Z)
+// @Param        to       query     string  false  "End time, RFC3339"    example(2026-09-30T23:59:59Z)
+// @Success      200      {object}  AuditLogPage
+// @Failure      400      {object}  auth.ErrorResponse  "Invalid query parameter"
+// @Failure      401      {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403      {object}  auth.ErrorResponse  "Forbidden — admin only"
+// @Failure      500      {object}  auth.ErrorResponse  "Internal server error"
+// @Router       /auditlogs [get]
 func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -70,11 +80,11 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Marshal BEFORE writing the header so errors are still recoverable.
-	resp := map[string]any{
-		"data":   logs,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
+	resp := AuditLogPage{
+		Data:   logs,
+		Total:  total,
+		Limit:  limit,
+		Offset: offset,
 	}
 	body, err := json.Marshal(resp)
 	if err != nil {

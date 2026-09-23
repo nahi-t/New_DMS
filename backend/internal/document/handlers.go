@@ -32,6 +32,55 @@ type ShareChecker interface {
 }
 
 /* ================================================================== */
+/*  Swagger helper types                                               */
+/* ================================================================== */
+
+// MessageResponse is a simple {message: "..."} envelope.
+type MessageResponse struct {
+	Message string `json:"message" example:"Document deleted"`
+}
+
+// UploadResponse is returned by Upload.
+type UploadResponse struct {
+	Message  string      `json:"message"  example:"File uploaded successfully"`
+	Document interface{} `json:"document"`
+}
+
+// RenameDocumentRequest is the body for PATCH /documents/{id}.
+type RenameDocumentRequest struct {
+	Name string `json:"name" example:"Contract-2026.pdf"`
+}
+
+// MoveDocumentRequest is the body for PATCH /documents/{id}/move.
+type MoveDocumentRequest struct {
+	FolderID int64 `json:"folder_id" example:"3"`
+}
+
+// UpdateStatusRequest is the body for PATCH /documents/{id}/status.
+type UpdateStatusRequest struct {
+	Status  string `json:"status"  example:"approved" enums:"approved,rejected"`
+	Comment string `json:"comment" example:"Looks good"`
+}
+
+// DocumentVersionResponse is a single version entry.
+type DocumentVersionResponse struct {
+	ID           string `json:"id"                example:"2f0c8e5b-..."`
+	Version      int    `json:"version"           example:"3"`
+	Filename     string `json:"original_filename" example:"Contract-2026.pdf"`
+	URL          string `json:"url"               example:"https://res.cloudinary.com/..."`
+	PreviewURL   string `json:"preview_url"       example:"https://res.cloudinary.com/..."`
+	HashedString string `json:"hashed_string"     example:"a1b2c3..."`
+	CreatedAt    string `json:"created_at"        example:"2026-09-21T14:48:32Z"`
+	IsCurrent    bool   `json:"is_current"        example:"true"`
+}
+
+// VersionDownloadResponse is returned by DownloadVersion.
+type VersionDownloadResponse struct {
+	URL      string `json:"url"      example:"https://res.cloudinary.com/..."`
+	Filename string `json:"filename" example:"Contract-2026.pdf"`
+}
+
+/* ================================================================== */
 /*  Handler                                                            */
 /* ================================================================== */
 
@@ -66,7 +115,6 @@ func (h *Handler) currentUser(r *http.Request) (*user.User, error) {
 	return user.GetUserByID(h.Service.DB, userID)
 }
 
-// getDocumentOwner returns the user_id stored on the documents row.
 func (h *Handler) getDocumentOwner(ctx context.Context, docID int64) (int64, error) {
 	var ownerID int64
 	err := h.Service.DB.QueryRow(ctx,
@@ -78,22 +126,15 @@ func (h *Handler) getDocumentOwner(ctx context.Context, docID int64) (int64, err
 	return ownerID, nil
 }
 
-// canAccess reports whether the user may perform `action` on the document.
-//
-// action: "view", "download", "edit", "delete", "share"
-//
-// Ownership always grants full access. Otherwise the share table decides.
 func (h *Handler) canAccess(
 	ctx context.Context,
 	docID, userID int64,
 	action string,
 ) bool {
-	// 1. Owner bypass
 	if ownerID, err := h.getDocumentOwner(ctx, docID); err == nil && ownerID == userID {
 		return true
 	}
 
-	// 2. Share table
 	required := map[string]string{
 		"view":     "viewer",
 		"download": "viewer",
@@ -106,7 +147,6 @@ func (h *Handler) canAccess(
 	}
 
 	if h.shares == nil {
-		// Share module not wired — deny by default.
 		return false
 	}
 	ok, err := h.shares.CanAccess(ctx, docID, userID, required)
@@ -117,6 +157,22 @@ func (h *Handler) canAccess(
 /*  Upload                                                             */
 /* ================================================================== */
 
+// Upload handles POST /folders/{folderId}/documents
+//
+// @Summary      Upload a document
+// @Description  Uploads a new file into the given folder and creates version 1.
+// @Tags         documents
+// @Accept       multipart/form-data
+// @Produce      json
+// @Security     BearerAuth
+// @Param        folderId     path      int     true   "Folder ID"
+// @Param        file         formData  file    true   "File to upload"
+// @Param        description  formData  string  false  "Optional description"
+// @Success      200  {object}  UploadResponse
+// @Failure      400  {object}  auth.ErrorResponse  "Invalid folder ID or missing file"
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403  {object}  auth.ErrorResponse  "Forbidden"
+// @Router       /folders/{folderId}/documents [post]
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	folderID, err := strconv.ParseInt(r.PathValue("folderId"), 10, 64)
 	if err != nil {
@@ -166,6 +222,18 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 /*  List                                                               */
 /* ================================================================== */
 
+// List handles GET /folders/{folderId}/documents
+//
+// @Summary      List documents in a folder
+// @Tags         documents
+// @Produce      json
+// @Security     BearerAuth
+// @Param        folderId  path  int  true  "Folder ID"
+// @Success      200  {array}   document.Document
+// @Failure      400  {object}  auth.ErrorResponse  "Invalid folder ID"
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      500  {object}  auth.ErrorResponse  "Internal server error"
+// @Router       /folders/{folderId}/documents [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	folderID, err := strconv.ParseInt(r.PathValue("folderId"), 10, 64)
 	if err != nil {
@@ -197,6 +265,19 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 /*  Download                                                           */
 /* ================================================================== */
 
+// Download handles GET /documents/{id}
+//
+// @Summary      Download the latest version
+// @Description  Redirects (302) to a Cloudinary URL with fl_attachment.
+// @Tags         documents
+// @Security     BearerAuth
+// @Param        id  path  int  true  "Document ID"
+// @Success      302  "Redirect to the Cloudinary download URL"
+// @Failure      400  {object}  auth.ErrorResponse  "Invalid document ID"
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403  {object}  auth.ErrorResponse  "Forbidden"
+// @Failure      500  {object}  auth.ErrorResponse  "Failed to generate URL"
+// @Router       /documents/{id} [get]
 func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	docID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -243,6 +324,19 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 /*  Delete                                                             */
 /* ================================================================== */
 
+// Delete handles DELETE /documents/{id}
+//
+// @Summary      Delete a document
+// @Description  Deletes the document and every version of it.
+// @Tags         documents
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  int  true  "Document ID"
+// @Success      200  {object}  MessageResponse
+// @Failure      400  {object}  auth.ErrorResponse  "Invalid document ID"
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403  {object}  auth.ErrorResponse  "Forbidden"
+// @Router       /documents/{id} [delete]
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	docID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -284,6 +378,21 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 /*  Rename                                                             */
 /* ================================================================== */
 
+// Rename handles PATCH /documents/{id}
+//
+// @Summary      Rename a document
+// @Description  Updates the display name. File content is unchanged.
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path  int                    true  "Document ID"
+// @Param        body  body  RenameDocumentRequest  true  "New name"
+// @Success      200  {object}  MessageResponse
+// @Failure      400  {object}  auth.ErrorResponse  "Invalid request"
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403  {object}  auth.ErrorResponse  "Forbidden"
+// @Router       /documents/{id} [patch]
 func (h *Handler) Rename(w http.ResponseWriter, r *http.Request) {
 	docID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -337,6 +446,20 @@ func (h *Handler) Rename(w http.ResponseWriter, r *http.Request) {
 /*  Move                                                               */
 /* ================================================================== */
 
+// Move handles PATCH /documents/{id}/move
+//
+// @Summary      Move a document to another folder
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path  int                  true  "Document ID"
+// @Param        body  body  MoveDocumentRequest  true  "Target folder"
+// @Success      200  {object}  MessageResponse
+// @Failure      400  {object}  auth.ErrorResponse  "Invalid request"
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403  {object}  auth.ErrorResponse  "Forbidden"
+// @Router       /documents/{id}/move [patch]
 func (h *Handler) Move(w http.ResponseWriter, r *http.Request) {
 	docID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -390,6 +513,19 @@ func (h *Handler) Move(w http.ResponseWriter, r *http.Request) {
 /*  Search                                                             */
 /* ================================================================== */
 
+// Search handles GET /documents?search=query&folder_id=1
+//
+// @Summary      Search documents
+// @Description  Search by name or description, optionally limited to a folder.
+// @Tags         documents
+// @Produce      json
+// @Security     BearerAuth
+// @Param        search     query  string  false  "Search term"  example(contract)
+// @Param        folder_id  query  int     false  "Limit to a folder"
+// @Success      200  {array}   document.Document
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      500  {object}  auth.ErrorResponse  "Internal server error"
+// @Router       /documents [get]
 func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 	searchTerm := r.URL.Query().Get("search")
 
@@ -424,6 +560,21 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 /*  Update content                                                     */
 /* ================================================================== */
 
+// UpdateDocumentContentHandler handles PUT /documents/{id}/content
+//
+// @Summary      Upload a new version
+// @Description  Creates a new version of the document (v2, v3, ...).
+// @Tags         documents
+// @Accept       multipart/form-data
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id        path      int   true  "Document ID"
+// @Param        document  formData  file  true  "New file content"
+// @Success      200  {object}  MessageResponse
+// @Failure      400  {object}  auth.ErrorResponse  "Invalid request"
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403  {object}  auth.ErrorResponse  "Forbidden"
+// @Router       /documents/{id}/content [put]
 func (h *Handler) UpdateDocumentContentHandler(w http.ResponseWriter, r *http.Request) {
 	docID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -478,6 +629,21 @@ func (h *Handler) UpdateDocumentContentHandler(w http.ResponseWriter, r *http.Re
 /*  Status workflow                                                    */
 /* ================================================================== */
 
+// UpdateStatusHandler handles PATCH /documents/{id}/status
+//
+// @Summary      Approve or reject a document
+// @Description  Only managers and admins can call this. Comment is optional.
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path  int                  true  "Document ID"
+// @Param        body  body  UpdateStatusRequest  true  "Decision + comment"
+// @Success      200  {object}  MessageResponse
+// @Failure      400  {object}  auth.ErrorResponse  "Invalid request"
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403  {object}  auth.ErrorResponse  "Forbidden"
+// @Router       /documents/{id}/status [patch]
 func (h *Handler) UpdateStatusHandler(w http.ResponseWriter, r *http.Request) {
 	docID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -534,6 +700,19 @@ func (h *Handler) UpdateStatusHandler(w http.ResponseWriter, r *http.Request) {
 /*  Version history                                                    */
 /* ================================================================== */
 
+// ListVersions handles GET /documents/{id}/versions
+//
+// @Summary      List every version of a document
+// @Description  Returns versions newest first, each with a download URL.
+// @Tags         document-versions
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  int  true  "Document ID"
+// @Success      200  {array}   document.DocumentVersionResponse
+// @Failure      400  {object}  auth.ErrorResponse  "Invalid document ID"
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403  {object}  auth.ErrorResponse  "Forbidden"
+// @Router       /documents/{id}/versions [get]
 func (h *Handler) ListVersions(w http.ResponseWriter, r *http.Request) {
 	docID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -612,6 +791,19 @@ func (h *Handler) ListVersions(w http.ResponseWriter, r *http.Request) {
 /*  Download a version                                                 */
 /* ================================================================== */
 
+// DownloadVersion handles GET /versions/{id}/download
+//
+// @Summary      Get a download URL for a specific version
+// @Description  Returns JSON with url + filename. The frontend triggers the download.
+// @Tags         document-versions
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "Version UUID"
+// @Success      200  {object}  VersionDownloadResponse
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403  {object}  auth.ErrorResponse  "Forbidden"
+// @Failure      404  {object}  auth.ErrorResponse  "Version not found"
+// @Router       /versions/{id}/download [get]
 func (h *Handler) DownloadVersion(w http.ResponseWriter, r *http.Request) {
 	versionID := r.PathValue("id")
 
@@ -638,7 +830,6 @@ func (h *Handler) DownloadVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// JSON response — the frontend uses this to trigger the browser download.
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"url":      url,
@@ -650,6 +841,20 @@ func (h *Handler) DownloadVersion(w http.ResponseWriter, r *http.Request) {
 /*  Restore a version                                                  */
 /* ================================================================== */
 
+// RestoreVersion handles POST /versions/{id}/restore
+//
+// @Summary      Restore an old version
+// @Description  Re-points the master document to the given version.
+// @Tags         document-versions
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "Version UUID"
+// @Success      200  {object}  MessageResponse
+// @Failure      401  {object}  auth.ErrorResponse  "Unauthorized"
+// @Failure      403  {object}  auth.ErrorResponse  "Forbidden"
+// @Failure      404  {object}  auth.ErrorResponse  "Version not found"
+// @Failure      500  {object}  auth.ErrorResponse  "Internal server error"
+// @Router       /versions/{id}/restore [post]
 func (h *Handler) RestoreVersion(w http.ResponseWriter, r *http.Request) {
 	versionID := r.PathValue("id")
 

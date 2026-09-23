@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	docs "github.com/docmanage_new/cmd/docs"
 	auditlog "github.com/docmanage_new/internal/auditLog"
 	"github.com/docmanage_new/internal/auth"
 	"github.com/docmanage_new/internal/document"
@@ -18,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
+	httpSwagger "github.com/swaggo/http-swagger"
 )
 
 func enableCORS(next http.Handler) http.Handler {
@@ -152,11 +154,29 @@ func main() {
 	folderHandler := folder.NewHandler(folderService)
 
 	/* -------------------------------------------------------------- */
-	/*  Routes                                                         */
+	/*  Mux                                                            */
 	/* -------------------------------------------------------------- */
 
 	mux := http.NewServeMux()
-	handlerWithCORS := enableCORS(mux)
+
+	/* -------------------------------------------------------------- */
+	/*  Swagger — must be registered AFTER mux is created               */
+	/* -------------------------------------------------------------- */
+
+	docs.SwaggerInfo.BasePath = "/api"
+	docs.SwaggerInfo.Host = "" // empty = use the same host as the browser
+
+	mux.Handle("/swagger/", httpSwagger.Handler(
+		httpSwagger.URL("/swagger/doc.json"),
+	))
+	mux.HandleFunc("/swagger/doc.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(docs.SwaggerInfo.ReadDoc()))
+	})
+
+	/* -------------------------------------------------------------- */
+	/*  Application routes                                             */
+	/* -------------------------------------------------------------- */
 
 	folder.SetupFolderRoutes(mux, folderHandler, authMW)
 	user.SetupUserRoutes(mux, userHandler, authMW)
@@ -166,7 +186,15 @@ func main() {
 	share.RegisterRoutes(mux, shareHandler, authMW)
 	auditlog.SetUpAuditLogDisplay(mux, auditHandler, authMW)
 
+	/* -------------------------------------------------------------- */
+	/*  Server                                                         */
+	/* -------------------------------------------------------------- */
+
+	handlerWithCORS := enableCORS(mux)
+
+	log.Println("Swagger UI:   http://localhost:8080/swagger/index.html")
 	log.Println("Server running on http://localhost:8080")
+
 	if err := http.ListenAndServe(":8080", handlerWithCORS); err != nil {
 		log.Fatalf("Server failed to start: %v", err)
 	}
