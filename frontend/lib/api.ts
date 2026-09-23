@@ -1,9 +1,9 @@
 
 import { getTokenCookie, removeTokenCookie, removeUserStorage } from './utils';
 import { LoginResponse, User, Folder, Document, ApiError, AuditLogFilters, AuditLogPage, DocumentShare } from '@/type';
+// const API_BASE = 'http://localhost:8080/api';
 
-const API_BASE = 'http://localhost:8080/api';
-// const API_BASE='https://new-dms.onrender.com/api'
+const API_BASE='https://new-dms.onrender.com/api'
 
 type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
